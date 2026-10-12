@@ -5,7 +5,7 @@ import { structured, withFallback } from "../llm.ts";
 import { getJob, upsertJob, type JobInput } from "../store.ts";
 import type { Job } from "../types.ts";
 import { classifyWorkplace, decodeEntities, htmlToText, sponsorshipSignal, truncate } from "../util/text.ts";
-import { extractSalary, FETCHERS, smartrecruitersDescription, workdayParts } from "./sources.ts";
+import { greenhouseEmbed, extractSalary, FETCHERS, smartrecruitersDescription, workdayParts } from "./sources.ts";
 
 const UA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0 Safari/537.36";
 
@@ -35,7 +35,32 @@ export async function resolveJob(input: CapturedJob): Promise<Job> {
   } catch {
     /* page may block bots; fall back to whatever the extension captured */
   }
-  const ld = html ? fromJsonLd(html, url) : null;
+  // A company site that embeds Greenhouse (…?gh_jid=123): find the board in the page and use Greenhouse's API.
+  const ghJid = (() => {
+    try {
+      return new URL(url).searchParams.get("gh_jid");
+    } catch {
+      return null;
+    }
+  })();
+  if (ghJid) {
+    // The board named in the page, else the obvious guesses from the domain (jobs.dropbox.com → "dropbox");
+    // Greenhouse's API confirms which one owns this job id.
+    const fromPage = html.match(/greenhouse\.io\/(?:embed\/job_board(?:\/js)?\?for=|embed\/job_app\?for=|v1\/boards\/)([\w-]+)/)?.[1];
+    const host = (() => {
+      try {
+        return new URL(url).hostname.replace(/^(www|jobs|careers|boards|apply|life|about)\./, "");
+      } catch {
+        return "";
+      }
+    })();
+    const guesses = [...new Set([fromPage, host.split(".")[0], host.replace(/\./g, ""), input.company?.toLowerCase().replace(/[^a-z0-9]/g, "")].filter(Boolean) as string[])];
+    for (const board of guesses.slice(0, 4)) {
+      const viaBoard = await fromAtsApi(`https://boards.greenhouse.io/${board}/jobs/${ghJid}`).catch(() => null);
+      if (viaBoard) return upsertJob({ ...viaBoard, url }).job;
+    }
+  }
+  const ld = html ? (fromJsonLd(html, url) ?? fromMicrodata(html, url)) : null;
   if (ld && (ld.description.length > 200 || !input.description)) return upsertJob(mergeCaptured(ld, input)).job;
 
   const pageText = input.description?.trim() || (html ? htmlToText(html.replace(/<(header|footer|nav)[\s\S]*?<\/\1>/gi, "")) : "");
@@ -45,7 +70,7 @@ export async function resolveJob(input: CapturedJob): Promise<Job> {
     () => llmExtract(url, pageText),
     () => ({ title: input.title || titleTag.split(/[|\-–]/)[0].trim() || "Untitled role", company: input.company || hostCompany(url), location: input.location ?? "", description: pageText }),
   );
-  const ats = detectAts(url);
+  const ats = detectAtsFromPage(url, html);
   return upsertJob({
     companyId: null,
     company: input.company || extracted.company,
@@ -93,7 +118,7 @@ async function fromAtsApi(url: string): Promise<JobInput | null> {
       location: j.location?.name ?? "",
       workplace: classifyWorkplace(j.location?.name),
       url: j.absolute_url,
-      applyUrl: j.absolute_url,
+      applyUrl: /greenhouse\.io\//.test(j.absolute_url) ? j.absolute_url : greenhouseEmbed(board, j.id),
       description,
       salary: extractSalary(description),
       postedAt: j.first_published,
@@ -185,7 +210,7 @@ function fromJsonLd(html: string, url: string): JobInput | null {
       .filter(Boolean)
       .join(" / ");
     const description = htmlToText(p.description ?? "");
-    const ats = detectAts(url);
+    const ats = detectAtsFromPage(url, html);
     return {
       companyId: null,
       company: typeof p.hiringOrganization === "string" ? p.hiringOrganization : (p.hiringOrganization?.name ?? hostCompany(url)),
@@ -223,4 +248,58 @@ async function llmExtract(url: string, pageText: string) {
   });
   if (!out.is_job_posting) throw new Error("not a job posting");
   return out;
+}
+
+/** URL first, then markers in the page for career sites on the company's own domain. */
+export function detectAtsFromPage(url: string, html = ""): string {
+  const byUrl = detectAts(url);
+  if (byUrl !== "unknown") return byUrl;
+  if (/rmkcdn\.successfactors\.com|jobs2web|career\d*\.successfactors\./i.test(html)) return "successfactors";
+  if (/\.icims\.com/i.test(html)) return "icims";
+  if (/\.taleo\.net/i.test(html)) return "taleo";
+  if (/myworkdayjobs\.com|myworkdaysite\.com/i.test(html)) return "workday";
+  if (/oraclecloud\.com\/hcmUI\/CandidateExperience/i.test(html)) return "oraclecloud";
+  return "unknown";
+}
+
+/** schema.org JobPosting as microdata (itemprop=…), used by SuccessFactors career sites and many others. */
+function fromMicrodata(html: string, url: string): JobInput | null {
+  if (!/itemtype=["']https?:\/\/schema\.org\/JobPosting/i.test(html) && !/itemprop=["']title["']/i.test(html)) return null;
+  const prop = (name: string) => {
+    const meta = html.match(new RegExp(`<meta[^>]*itemprop=["']${name}["'][^>]*content=["']([^"']*)["']`, "i"));
+    if (meta) return meta[1];
+    const open = new RegExp(`<([a-z0-9]+)\\b[^>]*itemprop=["']${name}["'][^>]*>`, "i").exec(html);
+    if (!open) return "";
+    // Walk to the matching close tag, counting nested tags of the same name.
+    const tag = open[1].toLowerCase();
+    const re = new RegExp(`<(/?)${tag}\\b[^>]*>`, "gi");
+    re.lastIndex = open.index + open[0].length;
+    let depth = 1;
+    for (let m = re.exec(html); m; m = re.exec(html)) {
+      depth += m[1] ? -1 : 1;
+      if (depth === 0) return html.slice(open.index + open[0].length, m.index);
+    }
+    return html.slice(open.index + open[0].length, open.index + open[0].length + 20000);
+  };
+  const title = decodeEntities(htmlToText(prop("title"))).trim();
+  if (!title) return null;
+  const description = htmlToText(prop("description"));
+  const location = [prop("addressLocality"), prop("addressRegion"), prop("addressCountry")].map((x) => decodeEntities(htmlToText(x)).trim()).filter(Boolean).join(", ");
+  const org = decodeEntities(htmlToText(prop("hiringOrganization"))).trim();
+  const ats = detectAtsFromPage(url, html);
+  return {
+    companyId: null,
+    company: org && org.length < 80 ? org : hostCompany(url),
+    ats,
+    externalId: `url:${url}`,
+    title,
+    location,
+    workplace: classifyWorkplace(location),
+    url,
+    applyUrl: applyPageUrl(ats, url),
+    description,
+    salary: extractSalary(description),
+    postedAt: prop("datePosted") || undefined,
+    sponsorsVisa: sponsorshipSignal(description),
+  };
 }

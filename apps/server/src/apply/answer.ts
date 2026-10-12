@@ -21,6 +21,8 @@ export interface AnswerContext {
   notes?: string;
   /** Draft open-ended answers for this job (Settings → autoWriteAnswers). */
   autoWrite?: boolean;
+  /** The most recent yes/no style answer on this form, for "If yes, …" follow-ups. */
+  lastChoice?: string;
 }
 
 type Value = string | string[] | null;
@@ -155,6 +157,60 @@ function authorizationOption(c: AnswerContext, f: FormField): string | undefined
   return opts.find((x) => /not authori[sz]ed|no\b/.test(x.l))?.o;
 }
 
+
+// ---------- places and history ----------
+
+/** Metro areas by the names people use for them; "onsite in Palo Alto or NYC" is the Bay Area for someone in SF. */
+const METROS: string[][] = [
+  ["san francisco", "sf", "bay area", "palo alto", "mountain view", "sunnyvale", "san jose", "menlo park", "oakland", "redwood city", "south san francisco", "san mateo", "cupertino", "santa clara", "foster city", "berkeley", "emeryville", "burlingame", "san bruno", "fremont"],
+  ["new york", "nyc", "manhattan", "brooklyn", "jersey city", "hoboken", "queens"],
+  ["seattle", "bellevue", "redmond", "kirkland", "bothell"],
+  ["los angeles", "santa monica", "culver city", "irvine", "pasadena", "venice", "playa vista", "el segundo"],
+  ["boston", "cambridge", "somerville", "waltham"],
+  ["chicago", "evanston"],
+  ["austin", "round rock"],
+  ["denver", "boulder"],
+  ["washington", "dc", "arlington", "reston", "mclean", "bethesda"],
+  ["atlanta"],
+  ["miami", "fort lauderdale"],
+  ["toronto", "waterloo"],
+  ["london"],
+];
+const metroOf = (place: string) => METROS.find((m) => m.some((n) => new RegExp(`\\b${n}\\b`).test(place.toLowerCase())));
+
+/** Does the question name a place the candidate already lives in (same metro)? */
+function mentionsHome(c: AnswerContext, text: string): boolean {
+  const p = c.profile.personal;
+  const t = text.toLowerCase();
+  const home = metroOf(`${p.city ?? ""}`);
+  if (home && home.some((n) => new RegExp(`\\b${n}\\b`).test(t))) return true;
+  return Boolean(p.city && t.includes(p.city.toLowerCase()));
+}
+
+/** "Comfortable working onsite/in the office in X?": yes when X is home (or they'll relocate) and they don't want remote-only. */
+function onsiteAnswer(c: AnswerContext, f: FormField): Value | undefined {
+  const pref = c.profile.preferences.workplace;
+  if (pref === "remote") return undefined; // let them decide; don't volunteer a no
+  const text = `${f.label} ${(f.options ?? []).join(" ")}`;
+  const ok = mentionsHome(c, text) || c.profile.logistics.willingToRelocate === true;
+  if (!ok) return undefined;
+  if (!f.options?.length) return "Yes";
+  return f.options.find((o) => /^yes\b/i.test(o.trim()) && !/relocat|discuss|accommodat/i.test(o)) ?? pickOption(f.options, "yes") ?? undefined;
+}
+
+const proseName = (s: string) => s.replace(/\s*\([^)]*\)\s*$/, "").replace(/,?\s+(inc|llc|ltd|corp|co)\.?$/i, "").trim().toLowerCase();
+/** Has the candidate worked at this company (per the résumé)? */
+const workedHere = (c: AnswerContext) => {
+  const co = proseName(c.job.company);
+  return c.doc.experience.some((e) => {
+    const x = proseName(e.company);
+    return x && co && (x === co || x.startsWith(`${co} `) || co.startsWith(`${x} `));
+  });
+};
+const GOV_RE = /\b(government|federal|state of|county of|city of|department of|u\.?s\.? (army|navy|air force|marine|coast guard)|military|public sector|agency)\b/i;
+const governmentHistory = (c: AnswerContext) => c.doc.experience.some((e) => GOV_RE.test(`${e.company} ${e.title}`));
+const isStudent = (c: AnswerContext) => c.doc.education.some((e) => e.current || (e.end && Number(e.end.slice(0, 4)) >= new Date().getFullYear()));
+
 const RULES: Rule[] = [
   // documents
   { re: /resume|cv\b|curriculum/, kinds: ["file"], value: (c, f) => (c.resumeDocx && (!f.accept || /docx|word|officedocument/i.test(f.accept)) ? c.resumeDocx : c.resumePdf) },
@@ -166,13 +222,13 @@ const RULES: Rule[] = [
   { re: /^(full |legal |your )?name$/, kinds: ["text"], value: (c) => `${c.profile.personal.firstName} ${c.profile.personal.lastName}`.trim() },
   { re: /e-?mail/, kinds: ["text", "email"], maxLen: 50, not: /opt|consent|subscribe|newsletter/, value: (c) => c.profile.personal.email },
   { re: /phone|mobile( number)?$|telephone/, kinds: ["text", "tel"], maxLen: 40, not: /type|opt|consent|sms/, value: (c) => c.profile.personal.phone },
-  { re: /linkedin/, kinds: ["text", "url"], maxLen: 60, value: (c) => withScheme(c.profile.personal.linkedin) },
-  { re: /github/, kinds: ["text", "url"], maxLen: 60, value: (c) => withScheme(c.profile.personal.github) },
+  { re: /linkedin/, kinds: ["text", "url", "textarea"], maxLen: 60, value: (c) => withScheme(c.profile.personal.linkedin) },
+  { re: /github/, kinds: ["text", "url", "textarea"], maxLen: 60, value: (c) => withScheme(c.profile.personal.github) },
   { re: /website|portfolio|personal (site|url)|blog/, kinds: ["text", "url"], maxLen: 60, value: (c) => withScheme(c.profile.personal.website || c.profile.personal.github || c.profile.personal.linkedin) },
   { re: /pronoun/, maxLen: 80, value: (c) => c.profile.personal.pronouns },
   // location
   {
-    re: /^(current )?(location|city)|where are you (currently )?(located|based)|city.*(state|country)|location \(city\)|what is your location|where do you intend to work|where will you (be )?(work|working|based)|intended work location|where do you (currently )?(live|reside)/,
+    re: /^(current )?(location|city)|where are you (currently )?(located|based)|city.*(state|country)|location \(city\)|what is your location|where do you intend to work|(what|which) location do you (intend|plan|want) to work|where will you (be )?(work|working|based)|intended work location|where do you (currently )?(live|reside)/,
     maxLen: 70,
     value: (c, f) => {
       const p = c.profile.personal;
@@ -224,7 +280,24 @@ const RULES: Rule[] = [
   { re: /(legally )?(authori[sz]ed|eligible|permitted) to work|authori[sz]ation to work|work authori[sz]ation/, value: (c, f) => authorizationOption(c, f) },
   { re: /sponsor|visa (status|support)|require.*(visa|immigration)|h-?1b/, value: (c) => yes(c.profile.workAuth.needsSponsorship) },
   { re: /relocat/, value: (c) => yes(c.profile.logistics.willingToRelocate) },
-  { re: /(previously|ever) (been )?(employed|worked|applied)|worked (at|for) .* before|former employee|(have you )?ever worked for/, value: () => "No" },
+  // Office and onsite expectations: answered only when the place is home (or they'll relocate).
+  {
+    re: /(comfortable|willing|able|open) (with|to) (an? )?(work(ing)? )?(onsite|on-site|in[- ]office|in[- ]person|from (the|our|a|an) .*office|hybrid)|onsite role|work from (the|our|a|an) .*office|in the office .*(days|week)|(commut|report) to (the|our|an?) office/,
+    kinds: [...CHOICE, "text"],
+    value: (c, f) => onsiteAnswer(c, f),
+  },
+  // History with this company and with government: from the résumé.
+  {
+    re: /(previously|ever|in the past) (been )?(employed|worked|engaged|applied)|(have you )?(been|were you) (previously |ever )?(employed|engaged|contracted)|employed.*(in the past|previously|before)|worked (at|for) .* before|former employee|(have you )?ever worked for|(current|former) (employee|contractor|intern) (of|at)/,
+    not: /government|federal|agency|public official/,
+    value: (c) => (workedHere(c) ? "Yes" : "No"),
+  },
+  { re: /government (entity|employee|official|employment|agency)|public official|federal (agency|government)|employed by (a|any) (u\.?s\.? )?government|government employ/, kinds: CHOICE, value: (c) => (governmentHistory(c) ? undefined : "No") },
+  // "If you answered yes, please list …" after a no: not applicable.
+  { re: /^if (you answered |your answer (is|was) )?["“']?yes["”']?|^if (so|yes)\b|^if applicable\b|^if not applicable/, kinds: TEXTY, value: (c) => (c.lastChoice && /^no\b/i.test(c.lastChoice) ? "N/A" : undefined) },
+  { re: /non[- ]?compete|non[- ]?solicit/, kinds: CHOICE, value: () => "No" },
+  { re: /(are you|currently) (an? )?(\w+ )?(student|enrolled)|graduating (in|this)|expected graduation/, kinds: ["radio", "select", "combobox"], value: (c) => (isStudent(c) ? undefined : "No") },
+  { re: /^(preferred|primary) language|language preference|choose your preferred language/, kinds: [...CHOICE, "listbox"], value: (_c, f) => (f.options?.length ? (pickOption(f.options, "English") ?? undefined) : "English") },
   { re: /(at least|over) 18|18 years|age of majority/, value: () => "Yes" },
   // voluntary self-identification
   { re: /gender|sex\b/, kinds: ["select", "radio", "combobox"], maxLen: 60, value: (c) => c.profile.eeo.gender ?? "__decline__" },
@@ -340,6 +413,11 @@ export async function answerFields(c: AnswerContext, fields: FormField[]): Promi
   const priorByLabel = new Map(c.prior.filter((p) => p.source === "user" && p.value != null).map((p) => [normalizeQuestion(p.label), p]));
   const ask = (f: FormField, note = "Needs your input"): FilledField => ({ ...f, value: null, source: "unanswered", confidence: 0, note: f.required ? note : undefined });
 
+  const push = result.push.bind(result);
+  result.push = (...items: FilledField[]) => {
+    for (const it of items) if (["radio", "select", "combobox", "listbox"].includes(it.kind) && typeof it.value === "string") c.lastChoice = it.value;
+    return push(...items);
+  };
   for (const f of fields) {
     const prior = priorByLabel.get(normalizeQuestion(f.label));
     if (prior) {

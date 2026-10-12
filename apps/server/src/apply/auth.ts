@@ -4,18 +4,21 @@ import { accountHost, createAccountRecord, getAccount, markAccount } from "../va
 import type { User } from "../store.ts";
 import type { Job } from "../types.ts";
 import { pageText } from "./extract.ts";
+import { hasCaptcha } from "./fill.ts";
 
 // Handles the account wall many ATSes put in front of the application (Workday, iCIMS, Taleo,
 // SuccessFactors, ...): sign in with a stored per-employer account, or create one with the user's
 // email and a generated password, then complete email verification from the user's inbox.
 
-export type AuthState = "none" | "signin" | "signup" | "verify_code" | "verify_link";
+export type AuthState = "none" | "signin" | "signup" | "email_first" | "verify_code" | "verify_link";
 
 export interface AuthContext {
   user: User;
   job: Job;
   think: (text: string, kind?: "thought" | "action" | "error") => void;
   allowCreate: boolean;
+  /** A dry run on a real employer: no accounts are ever created. */
+  dryRun?: boolean;
   /** Called with the vault host once an account is used or created, so the application can show it. */
   onAccount?: (host: string) => void;
 }
@@ -49,8 +52,23 @@ export async function detectAuthState(page: Page): Promise<AuthState> {
       }).length,
     )
     .catch(() => 0);
-  if (codeInputs > 0 && /verif|one-time|we sent|sent (you )?(a|an|the) (code|email)|enter the code/.test(text)) return "verify_code";
+  // Split code boxes (one digit each), as Oracle Recruiting and others use.
+  const digitBoxes = await frame.locator("input[maxlength='1']:visible").count().catch(() => 0);
+  if ((codeInputs > 0 || digitBoxes >= 4) && /verif|one-time|we sent|sent (you )?(a|an|the) (code|email)|enter the code|(enter|type) (the|your) (\d-digit |verification |security |one-time )?code/.test(text)) return "verify_code";
   if (/(check|verify) your (email|inbox)|we('ve| have) sent (you )?(an email|a (verification )?link)|click the link (in|we)|activate your account/.test(text)) return "verify_link";
+  // Email-first sign-in (iCIMS, Oracle Recruiting, ADP, Phenom): one email box, maybe a terms checkbox, nothing else.
+  const others = await frame
+    .locator("input:visible:not([type=hidden]):not([type=checkbox]):not([type=radio]):not([type=submit]):not([type=button]):not([type=search]), select:visible, textarea:visible")
+    .count()
+    .catch(() => 0);
+  const hasEmail = (await frame.locator("input[type=email]:visible, input[name*=email i]:visible, input[id*=email i]:visible, input[autocomplete=email]:visible").count().catch(() => 0)) > 0;
+  if (
+    hasEmail &&
+    others <= 2 &&
+    (/\/(login|signin|sign-in|apply\/email)\b/i.test(page.url()) ||
+      /sign in|log in|returning candidate|enter your email|we('ll| will) (send|email) (you )?(a|an) (code|link|one-time)|continue with email|verify your email address/.test(text.slice(0, 1500)))
+  )
+    return "email_first";
   return "none";
 }
 
@@ -102,12 +120,21 @@ export async function handleAuth(page: Page, ctx: AuthContext): Promise<{ ok: tr
   let triedSignin = false;
   let triedSignup = false;
   let retriedGenerated = false;
+  let triedEmail = false;
   const senderHints = [ctx.job.company.replace(/\(.*?\)/g, "").trim().split(/\s+/)[0], "workday", "icims", "taleo", "successfactors", "oracle", host.split(".")[0]].filter(Boolean);
 
   for (let step = 0; step < 8; step++) {
     const state = await detectAuthState(page);
     if (state === "none") return { ok: true };
     const frame = await authFrame(page);
+    // Never solve or bypass a captcha: hand it to the user with what they need to finish.
+    if ((state === "signin" || state === "signup") && (await hasCaptcha(page))) {
+      const acct = getAccount(ctx.user.id, host);
+      return {
+        ok: false,
+        reason: `${host} asks you to prove you're human before ${state === "signin" ? "signing in" : "creating an account"}. Open the posting and ${acct ? `sign in with ${acct.email}` : "create the account yourself (your application password works)"}, then finish the application or mark it done here.`,
+      };
+    }
 
     if (state === "signin") {
       const acct = getAccount(ctx.user.id, host);
@@ -131,7 +158,11 @@ export async function handleAuth(page: Page, ctx: AuthContext): Promise<{ ok: tr
         } else markAccount(ctx.user.id, host, "active");
         continue;
       }
-      if (!ctx.allowCreate) return { ok: false, reason: `${host} needs a candidate account. Turn on "Create employer accounts for me" in Settings, or create one yourself and retry.` };
+      if (!ctx.allowCreate)
+        return {
+          ok: false,
+          reason: `${host} needs a candidate account to apply. ${ctx.dryRun ? "Dry runs never create employer accounts." : 'Turn on "Create employer accounts for me" in Settings, or create one yourself and retry.'}`,
+        };
       if (triedSignup) return { ok: false, reason: "Account creation didn't complete on the employer site" };
       ctx.think("No account with this employer yet; opening Create Account", "action");
       if (!(await clickByText(page, /create (an )?account|sign up|register|new user|join/i))) return { ok: false, reason: "Couldn't find a Create Account option on the sign-in page" };
@@ -139,6 +170,12 @@ export async function handleAuth(page: Page, ctx: AuthContext): Promise<{ ok: tr
     }
 
     if (state === "signup") {
+      // Never create an account unless the user allows it (and never during a dry run on a real site).
+      if (!ctx.allowCreate)
+        return {
+          ok: false,
+          reason: `${host} needs a candidate account to apply. ${ctx.dryRun ? "Dry runs never create employer accounts." : 'Turn on "Create employer accounts for me" in Settings, or create one yourself and retry.'}`,
+        };
       let acct = getAccount(ctx.user.id, host);
       if (triedSignup) {
         const text = await pageText(page);
@@ -175,16 +212,45 @@ export async function handleAuth(page: Page, ctx: AuthContext): Promise<{ ok: tr
       continue;
     }
 
+    if (state === "email_first") {
+      const acct = getAccount(ctx.user.id, host);
+      // Entering the email can create a candidate profile and send a code: never in a dry run, and only when allowed.
+      if (ctx.dryRun || (!acct && !ctx.allowCreate))
+        return {
+          ok: false,
+          reason: `${host} signs candidates in by email before the application (it creates a candidate profile and emails a code). ${ctx.dryRun ? "Dry runs stop here." : 'Turn on "Create employer accounts for me" in Settings to let Ferry continue, or sign in yourself.'}`,
+        };
+      if (triedEmail) return { ok: false, reason: `Got stuck on ${host}'s email sign-in step` };
+      triedEmail = true;
+      const e = await emailInput(frame);
+      if (!e) return { ok: false, reason: `Couldn't find the email box on ${host}'s sign-in page` };
+      await e.fill(acct?.email ?? email);
+      await checkConsents(frame);
+      ctx.onAccount?.(host);
+      ctx.think(`Signing in to ${host} with ${acct?.email ?? email}`, "action");
+      since = new Date();
+      if (!(await clickByText(page, /^(next|continue|submit|sign in|log ?in|send( me)? (a |the )?(code|link)|get (a |the )?code|verify|apply|start)$/i, "button, input[type=submit], input[type=button], a, [role=button]"))) await e.press("Enter");
+      continue;
+    }
+
     if (state === "verify_code" || state === "verify_link") {
       ctx.think("Waiting for the employer's verification email in your inbox", "action");
       const v = await waitForVerification(ctx.user.id, { since, senderHints, timeoutMs: 120_000, prefer: state === "verify_link" ? "link" : "code" });
       if (!v) return { ok: false, reason: "The verification email didn't arrive. Connect your inbox (Settings → Email) so Ferry can read verification codes, or verify the account yourself." };
       if (state === "verify_code" && v.code) {
         ctx.think(`Entering the verification code from "${v.message.subject}"`, "action");
-        const codeField = frame.locator("input:visible").filter({ hasNot: frame.locator("[type=password]") });
-        const target = (await frame.getByLabel(/code|verification|otp|pin/i).count()) ? frame.getByLabel(/code|verification|otp|pin/i).first() : codeField.first();
-        await target.fill(v.code);
-        if (!(await clickByText(page, /^(verify|submit|continue|confirm|next)$/i))) await target.press("Enter");
+        const boxes = frame.locator("input[maxlength='1']:visible");
+        const nBoxes = await boxes.count();
+        if (nBoxes >= 4 && nBoxes >= v.code.length) {
+          // One digit per box: type into the first and let the page advance, else fill each.
+          for (let i = 0; i < v.code.length; i++) await boxes.nth(i).fill(v.code[i]);
+          if (!(await clickByText(page, /^(verify|submit|continue|confirm|next)$/i))) await boxes.nth(v.code.length - 1).press("Enter");
+        } else {
+          const codeField = frame.locator("input:visible").filter({ hasNot: frame.locator("[type=password]") });
+          const target = (await frame.getByLabel(/code|verification|otp|pin/i).count()) ? frame.getByLabel(/code|verification|otp|pin/i).first() : codeField.first();
+          await target.fill(v.code);
+          if (!(await clickByText(page, /^(verify|submit|continue|confirm|next)$/i))) await target.press("Enter");
+        }
       } else if (v.link) {
         ctx.think("Opening the verification link from your inbox", "action");
         await page.goto(v.link, { waitUntil: "domcontentloaded" });

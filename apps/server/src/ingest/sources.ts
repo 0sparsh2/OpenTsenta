@@ -33,6 +33,8 @@ interface GhJob {
   departments?: { name: string }[];
   company_name?: string;
 }
+export const greenhouseEmbed = (board: string, id: string | number) => `https://job-boards.greenhouse.io/embed/job_app?for=${encodeURIComponent(board)}&token=${id}`;
+
 const greenhouse: Fetcher = async (c) => {
   const data = await getJson<{ jobs: GhJob[] }>(`https://boards-api.greenhouse.io/v1/boards/${c.board}/jobs?content=true`);
   return data.jobs.map((j) => {
@@ -48,7 +50,8 @@ const greenhouse: Fetcher = async (c) => {
       workplace: classifyWorkplace(location, j.title),
       department: j.departments?.[0]?.name,
       url: j.absolute_url,
-      applyUrl: j.absolute_url,
+      // Company-site listings (jobs.dropbox.com/…?gh_jid=) wrap the form in custom pages; the hosted embed is always the form.
+      applyUrl: /greenhouse\.io\//.test(j.absolute_url) ? j.absolute_url : greenhouseEmbed(c.board, j.id),
       description,
       salary: extractSalary(description),
       postedAt: j.first_published ?? j.updated_at,

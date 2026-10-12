@@ -191,17 +191,20 @@ export async function fillField(page: Page, f: FrameField & FilledField): Promis
 
 const SUBMIT_RE = /^(submit( application| my application)?|send application|apply( now)?|complete application|finish)$/i;
 const NEXT_RE = /^(next|continue|save (and|&) continue|next step|proceed|review)$/i;
-const APPLY_ENTRY_RE = /^(apply( now| for this (job|position|role))?|i'?m interested|start application|apply manually)$/i;
+const APPLY_ENTRY_RE =
+  /^(apply( now| online| here| today)?|apply (for|to) (this|the) (job|position|role|opening)( online| now)?|apply to (job|position)|i'?m interested|(start|begin) (my |your |an? )?application|apply manually|easy apply)$/i;
 // Workday-style "how do you want to apply" choice: manual is predictable and doesn't hand the résumé to the employer's parser first.
 const APPLY_MANUAL_RE = /^(apply manually|enter manually|fill (it )?out manually|apply without (a )?resume)$/i;
 
 async function findButton(page: Page, re: RegExp): Promise<Locator | null> {
   for (const frame of page.frames()) {
-    const cands = frame.locator("button:visible, input[type=submit]:visible, a[role=button]:visible, a:visible, [role=button]:visible");
+    const cands = frame.locator("button:visible, input[type=submit]:visible, input[type=button]:visible, a[role=button]:visible, a:visible, [role=button]:visible");
     const n = Math.min(await cands.count().catch(() => 0), 200);
     for (let i = 0; i < n; i++) {
       const c = cands.nth(i);
-      const t = ((await c.innerText().catch(() => "")) || (await c.getAttribute("value").catch(() => "")) || (await c.getAttribute("aria-label").catch(() => "")) || "").trim();
+      const raw = ((await c.innerText().catch(() => "")) || (await c.getAttribute("value").catch(() => "")) || (await c.getAttribute("aria-label").catch(() => "")) || "").trim();
+      // "Apply now »", "Apply →", "› Submit": compare the words, not the arrows and icons around them.
+      const t = raw.replace(/[^\p{L}\p{N}'’\s]+/gu, " ").replace(/\s+/g, " ").trim();
       if (t && t.length < 50 && re.test(t)) return c;
     }
   }
@@ -214,13 +217,36 @@ export const findApplyEntry = (page: Page) => findButton(page, APPLY_ENTRY_RE);
 export const findApplyManual = (page: Page) => findButton(page, APPLY_MANUAL_RE);
 
 const CAPTCHA_RE = /recaptcha|hcaptcha|turnstile|challenges\.cloudflare|captcha/i;
-export async function hasCaptcha(page: Page): Promise<boolean> {
+
+/**
+ * Full-page bot protection (DataDome, Cloudflare, PerimeterX, Akamai) that stands in front of the whole site.
+ * Ferry doesn't try to get past these; it hands the application back.
+ */
+export async function botWall(page: Page): Promise<string | null> {
   for (const f of page.frames()) {
-    if (CAPTCHA_RE.test(f.url())) {
+    const u = f.url();
+    if (/captcha-delivery\.com|datadome/i.test(u)) return "DataDome";
+    if (/challenges\.cloudflare\.com/i.test(u) && f !== page.mainFrame()) {
       const el = await f.frameElement().catch(() => null);
       const box = el ? await el.boundingBox().catch(() => null) : null;
-      // Invisible reCAPTCHA v3 badges are tiny; only a visible challenge blocks us.
-      if (box && box.width > 120 && box.height > 60) return true;
+      if (box && box.width > 200) return "Cloudflare";
+    }
+  }
+  const title = (await page.title().catch(() => "")).toLowerCase();
+  const text = (await page.locator("body").innerText({ timeout: 2000 }).catch(() => "")).slice(0, 600).toLowerCase();
+  if (/just a moment|attention required/.test(title) && /cloudflare|checking your browser|verify you are human/.test(`${title} ${text}`)) return "Cloudflare";
+  if (/px-captcha|press (&|and) hold/.test(text) || (await page.locator("#px-captcha").count().catch(() => 0)) > 0) return "PerimeterX";
+  if (/access denied/.test(title) && /reference #/.test(text)) return "Akamai";
+  return null;
+}
+export async function hasCaptcha(page: Page): Promise<boolean> {
+  for (const f of page.frames()) {
+    if (CAPTCHA_RE.test(f.url()) && !/size=invisible/.test(f.url())) {
+      const el = await f.frameElement().catch(() => null);
+      const box = el ? await el.boundingBox().catch(() => null) : null;
+      // Invisible reCAPTCHA v3 badges are tiny and challenge frames park offscreen until needed;
+      // only a visible widget on the page blocks us.
+      if (box && box.width > 120 && box.height > 60 && box.y >= 0 && box.x >= 0) return true;
     }
   }
   return false;

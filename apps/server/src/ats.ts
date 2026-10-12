@@ -25,7 +25,8 @@ export const ATS_LIST: AtsInfo[] = [
   { id: "jazzhr", name: "JazzHR", urlPatterns: [".applytojob.com"], discovery: false, tuned: false },
   { id: "jobvite", name: "Jobvite", urlPatterns: ["jobvite.com"], discovery: false, tuned: false },
   { id: "breezyhr", name: "BreezyHR", urlPatterns: [".breezy.hr"], discovery: false, tuned: false },
-  { id: "oraclecloud", name: "Oracle Recruiting", urlPatterns: [".oraclecloud.com", "taleo.net"], discovery: false, tuned: false },
+  { id: "taleo", name: "Taleo", urlPatterns: ["taleo.net"], discovery: false, tuned: false },
+  { id: "oraclecloud", name: "Oracle Recruiting", urlPatterns: [".oraclecloud.com"], discovery: false, tuned: false },
   { id: "paylocity", name: "Paylocity", urlPatterns: [".paylocity.com/recruiting"], discovery: false, tuned: false },
   { id: "ultipro", name: "UKG", urlPatterns: ["recruiting.ultipro.com", "recruiting2.ultipro.com", ".rec.pro.ukg.net"], discovery: false, tuned: false },
   { id: "successfactors", name: "SAP SuccessFactors", urlPatterns: [".successfactors.com", ".successfactors.eu", ".sapsf.com", "jobs.hr.cloud.sap"], discovery: false, tuned: false },
@@ -86,6 +87,12 @@ export function parseJobUrl(raw: string): { ats: string; board?: string; jobId?:
 export function applyPageUrl(ats: string, jobUrl: string, applyUrl?: string): string {
   if (ats === "lever") return jobUrl.replace(/\/apply\/?$/, "").replace(/\/$/, "") + "/apply";
   if (ats === "ashby") return jobUrl.replace(/\/application\/?$/, "").replace(/\/$/, "") + "/application";
-  if (ats === "greenhouse") return jobUrl;
+  // SuccessFactors career sites: "Apply now" opens a dialog whose link is /talentcommunity/apply/<id>/; go straight there.
+  if (ats === "successfactors") {
+    const m = jobUrl.match(/^(https?:\/\/[^/]+)\/job\/[^?#]*?\/(\d{6,})\/?/);
+    if (m) return `${m[1]}/talentcommunity/apply/${m[2]}/?locale=en_US`;
+  }
+  // Prefer Greenhouse's own form over a company site that wraps it.
+  if (ats === "greenhouse") return applyUrl && /greenhouse\.io\//.test(applyUrl) ? applyUrl : jobUrl;
   return applyUrl || jobUrl;
 }

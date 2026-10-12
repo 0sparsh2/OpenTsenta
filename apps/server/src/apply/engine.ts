@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import type { Page } from "playwright";
-import { applyPageUrl, detectAts } from "../ats.ts";
+import { applyPageUrl, atsName, detectAts } from "../ats.ts";
 import { publish } from "../bus.ts";
 import { newApplyContext } from "../browser.ts";
 import { config, paths } from "../config.ts";
@@ -27,7 +27,7 @@ import type { FilledField, PipelineStatus, TraceStep } from "../types.ts";
 import { answerFields, memorable, missingRequired } from "./answer.ts";
 import { detectAuthState, handleAuth } from "./auth.ts";
 import { extractFields, pageText, type FrameField } from "./extract.ts";
-import { CONFIRMATION_RE, dismissCookieBanner, fillField, findApplyEntry, findApplyManual, findNext, findSubmit, hasCaptcha, probeComboboxOptions, verifyAndRepair, visibleErrors } from "./fill.ts";
+import { botWall, CONFIRMATION_RE, dismissCookieBanner, fillField, findApplyEntry, findApplyManual, findNext, findSubmit, hasCaptcha, probeComboboxOptions, verifyAndRepair, visibleErrors } from "./fill.ts";
 import { navigate } from "./navigator.ts";
 
 const MAX_PAGES = 8;
@@ -171,7 +171,9 @@ async function openForm(run: Run, page: BrowserPage, target: string): Promise<{ 
     const r = await handleAuth(page, {
       user,
       job,
-      allowCreate: user.settings.allowAccountCreation,
+      // A dry run on a real employer must have no side effects: never create accounts there.
+      allowCreate: user.settings.allowAccountCreation && !(!job.applyUrl.includes("/mock-ats/") && !config.allowRealSubmit),
+      dryRun: !job.applyUrl.includes("/mock-ats/") && !config.allowRealSubmit,
       think: (t, k) => run.think(t, k),
       onAccount: (host) => {
         if (run.app.accountHost !== host) run.app = patchApplication(run.app.id, { accountHost: host });
@@ -216,7 +218,14 @@ async function openForm(run: Run, page: BrowserPage, target: string): Promise<{ 
       fields = await extractFields(page);
     }
   }
-  if (!fields.length) return { blocked: "Couldn't find the application form on the page" };
+  if (!fields.length) {
+    const wall = await botWall(page);
+    if (wall)
+      return {
+        blocked: `${atsName(job.ats)} put a bot check (${wall}) in front of this form, and Ferry doesn't get around those. Your tailored résumé and answers are ready: open the posting and apply, or fill it from your own browser with the Ferry extension.`,
+      };
+    return { blocked: "Couldn't find the application form on the page" };
+  }
   return { fields };
 }
 

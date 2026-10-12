@@ -83,8 +83,15 @@ function collectFields(prefix: string) {
       if (t && !GENERIC.test(t)) return t;
     }
     const wrap = el.closest("label");
-    if (wrap && !GENERIC.test(textOf(wrap)) && textOf(wrap)) return textOf(wrap);
+    if (wrap && !GENERIC.test(ownText(wrap)) && ownText(wrap)) return ownText(wrap);
     return containerLabel(el.parentElement, el, false) || containerLabel(el.parentElement, el, true) || norm(el.getAttribute("placeholder") || el.getAttribute("name"));
+  }
+
+  /** A wrapping <label>'s own words, without the text of the select/options inside it. */
+  function ownText(el: HTMLElement): string {
+    const clone = el.cloneNode(true) as HTMLElement;
+    for (const c of Array.from(clone.querySelectorAll("select, option, textarea, input, [role=listbox], [role=option]"))) c.remove();
+    return norm(clone.textContent || "");
   }
 
   function optionLabel(el: HTMLInputElement): string {
@@ -249,6 +256,8 @@ function collectFields(prefix: string) {
     if (done.has(el) || !isVis(el)) continue;
     done.add(el);
     const label = labelOf(el);
+    // The site's own language switcher (Lever: "EN - English, Select a language") isn't a question.
+    if (/select a language|change language|language selector/i.test(label) || el.closest("header, footer, nav")) continue;
     const raw = (el.closest("[class*='field' i], [data-automation-id*='formField' i], div")?.querySelector("label") as HTMLElement | null)?.innerText ?? label;
     out.push({ id: tag(el), label, kind: "listbox", required: el.getAttribute("aria-required") === "true" || /[*✱]/.test(raw), placeholder: textOf(el) || undefined });
   }

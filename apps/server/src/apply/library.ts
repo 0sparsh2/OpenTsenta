@@ -27,8 +27,22 @@ function similar(a: string, b: string) {
 /** Replace the company's name (and "{company}") so "Why Stripe?" and "Why Acme?" read the same. */
 export function genericQuestion(label: string, company: string) {
   let q = norm(label);
-  const c = norm(company);
-  if (c) q = q.split(c).join("company");
+  const c = norm(proseCompany(company));
+  if (c && q.includes(c)) q = q.split(c).join("company");
+  else if (c) {
+    // "Hugging Face" in the question, "Huggingface" in our data: match ignoring spaces, 1-4 words at a time.
+    const compact = c.replace(/\s+/g, "");
+    const ws = q.split(" ");
+    outer: for (let n = 4; n >= 1; n--) {
+      for (let i = 0; i + n <= ws.length; i++) {
+        if (ws.slice(i, i + n).join("") === compact) {
+          ws.splice(i, n, "company");
+          q = ws.join(" ");
+          break outer;
+        }
+      }
+    }
+  }
   return q.replace(/\bcompany company\b/g, "company");
 }
 

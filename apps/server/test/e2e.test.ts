@@ -231,3 +231,28 @@ test("Workday-style tenant: creates an account with your application password, v
   assert.equal((await call("GET", "/ats-accounts")).length, 1, "reused the account");
   assert.ok(!done.trace.some((t: any) => /Creating your candidate account/.test(t.text)));
 });
+
+test("account walls: with creation off (or in a dry run) nothing is typed and no account is created", async () => {
+  const { handleAuth } = await import("../src/apply/auth.ts");
+  const { getApplyBrowser } = await import("../src/browser.ts");
+  const { listAccounts } = await import("../src/vault.ts");
+  const { getUserByEmail, getJob } = await import("../src/store.ts");
+  const user = getUserByEmail("test@ferry.local")!;
+  const job = getJob((await call("GET", "/jobs/search?q=Acme&limit=1")).items[0].id)!;
+  const before = listAccounts(user.id).length;
+  const page = await (await getApplyBrowser()).newPage();
+  // A real-looking sign-up page (two password fields), served from a non-sandbox origin.
+  await page.route("https://careers.example.org/**", (r) =>
+    r.fulfill({ contentType: "text/html", body: `<h1>Create Account</h1><label>Email <input type="email" id="e"></label><label>Password <input type="password" id="p1"></label><label>Verify Password <input type="password" id="p2"></label><button>Create Account</button>` }),
+  );
+  await page.goto("https://careers.example.org/apply");
+  for (const opts of [{ allowCreate: false }, { allowCreate: false, dryRun: true }]) {
+    const r = await handleAuth(page, { user, job, think: () => {}, ...opts });
+    assert.equal(r.ok, false);
+    assert.match((r as { reason: string }).reason, opts.dryRun ? /Dry runs never create employer accounts/ : /needs a candidate account/);
+  }
+  assert.equal(await page.inputValue("#e"), "", "nothing typed");
+  assert.equal(await page.inputValue("#p1"), "");
+  assert.equal(listAccounts(user.id).length, before, "no account record");
+  await page.close();
+});
