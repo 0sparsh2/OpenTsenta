@@ -92,7 +92,7 @@ test("profiles: import per role, the best one is picked for each job, the defaul
   // Targets steer which profile a job uses.
   await call("PUT", `/resumes/${data.resume.id}`, { targets: { titles: ["Data Engineer", "Analytics Engineer"], keywords: ["Spark", "Airflow"] } });
   const jobs = (await call("GET", "/jobs/search?q=Acme&limit=10")).data.items;
-  const platform = jobs.find((j: any) => j.title.includes("Platform"));
+  const platform = jobs.find((j: any) => j.title === "Software Engineer, Platform");
   const detail = (await call("GET", `/jobs/${platform.id}`)).data;
   assert.equal(detail.match.profileId, swe.resume.id, "software roles use the software profile");
 
@@ -177,7 +177,7 @@ test("word export mirrors the résumé; 'keep my design' rewrites the user's own
 
 test("tailored résumé per application: profile shown, edits saved, redo with instructions is limited", async () => {
   const jobs = (await call("GET", "/jobs/search?q=Acme&limit=10")).data.items;
-  const job = jobs.find((j: any) => j.title.includes("Platform"));
+  const job = jobs.find((j: any) => j.title === "Software Engineer, Platform");
   const app = (await call("POST", "/applications", { jobId: job.id })).data;
   assert.ok(app.profile?.id);
 

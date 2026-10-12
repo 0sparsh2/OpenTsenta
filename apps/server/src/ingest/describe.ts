@@ -7,8 +7,8 @@ import { sponsorshipSignal } from "../util/text.ts";
 
 /** Make sure a job has its description (some ATS list APIs omit it). Returns the up-to-date job. */
 export async function ensureDescription(job: Job): Promise<Job> {
-  if (job.description || !["smartrecruiters", "workday", "workable"].includes(job.ats)) return job;
-  const d = await fetchDescription(job.ats, job.externalId).catch(() => "");
+  if (job.description || !["smartrecruiters", "workday", "workable", "oraclecloud", "icims", "taleo", "successfactors"].includes(job.ats)) return job;
+  const d = await fetchDescription(job.ats, job.externalId, job.url).catch(() => "");
   if (!d) return job;
   run("UPDATE jobs SET description = ?, salary = COALESCE(salary, ?), sponsors_visa = COALESCE(sponsors_visa, ?) WHERE id = ?", d, extractSalary(d) ?? null, (() => {
     const v = sponsorshipSignal(d);

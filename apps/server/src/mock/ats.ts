@@ -2,6 +2,7 @@ import { Hono } from "hono";
 import { config } from "../config.ts";
 import { upsertJob } from "../store.ts";
 import { WD_JOBS, workday } from "./workday.ts";
+import { ENTERPRISE_JOBS, icims, orc } from "./enterprise.ts";
 
 // A sandbox employer ("Acme Robotics") with two application styles, so the full
 // find → tailor → apply → submit → confirm loop can run end to end without touching a real
@@ -68,6 +69,25 @@ Salary $130,000 - $165,000.`,
 ];
 
 export function seedSandboxJobs() {
+  for (const j of ENTERPRISE_JOBS) {
+    const slug = j.title.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
+    const url = j.kind === "orc" ? `${config.publicUrl}/mock-ats/orc/acme/job/${j.id}` : `${config.publicUrl}/mock-ats/icims/jobs/${j.id}/${slug}/job`;
+    upsertJob({
+      companyId: null,
+      company: "Acme Robotics (sandbox)",
+      ats: j.kind === "orc" ? "oraclecloud" : "icims",
+      externalId: `acme-${j.kind}:${j.id}`,
+      title: j.title,
+      location: j.location,
+      workplace: /remote/i.test(j.location) ? "remote" : /hybrid/i.test(j.location) ? "hybrid" : "onsite",
+      url,
+      applyUrl: url,
+      description: j.description,
+      salary: j.description.match(/\$[\d,]+ - \$[\d,]+/)?.[0],
+      postedAt: new Date().toISOString(),
+      sponsorsVisa: null,
+    });
+  }
   for (const j of WD_JOBS) {
     const url = `${config.publicUrl}/mock-ats/workday/acme/job/${j.id}`;
     upsertJob({
@@ -200,6 +220,8 @@ document.getElementById('wiz').addEventListener('submit',e=>{const f=e.target;co
 export const mockAts = new Hono();
 // Workday-style tenant (accounts + email verification) is mounted first so its routes win.
 mockAts.route("/workday", workday);
+mockAts.route("/orc", orc);
+mockAts.route("/icims", icims);
 
 mockAts.get("/:style/jobs/:id", (c) => {
   const j = JOBS.find((x) => x.id === c.req.param("id") && x.style === c.req.param("style"));

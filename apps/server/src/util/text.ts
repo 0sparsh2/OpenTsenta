@@ -71,3 +71,21 @@ export function sponsorshipSignal(desc: string): boolean | null {
   if (/(visa|h-?1b|immigration) sponsorship (is )?(available|offered|provided)|we (will )?sponsor|sponsorship available/.test(d)) return true;
   return null;
 }
+
+
+/** The inner HTML of the first element with itemprop=name (or a <meta itemprop content>), with nested tags balanced. */
+export function microdataProp(html: string, name: string): string {
+  const meta = html.match(new RegExp(`<meta[^>]*itemprop=["']${name}["'][^>]*content=["']([^"']*)["']`, "i"));
+  if (meta) return meta[1];
+  const open = new RegExp(`<([a-z0-9]+)\\b[^>]*itemprop=["']${name}["'][^>]*>`, "i").exec(html);
+  if (!open) return "";
+  const tag = open[1].toLowerCase();
+  const re = new RegExp(`<(/?)${tag}\\b[^>]*>`, "gi");
+  re.lastIndex = open.index + open[0].length;
+  let depth = 1;
+  for (let m = re.exec(html); m; m = re.exec(html)) {
+    depth += m[1] ? -1 : 1;
+    if (depth === 0) return html.slice(open.index + open[0].length, m.index);
+  }
+  return html.slice(open.index + open[0].length, open.index + open[0].length + 20000);
+}

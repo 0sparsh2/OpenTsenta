@@ -1,10 +1,10 @@
 import { z } from "zod";
 import { applyPageUrl, detectAts, parseJobUrl } from "../ats.ts";
-import { one } from "../db.ts";
+import { all, one } from "../db.ts";
 import { structured, withFallback } from "../llm.ts";
 import { getJob, upsertJob, type JobInput } from "../store.ts";
 import type { Job } from "../types.ts";
-import { classifyWorkplace, decodeEntities, htmlToText, sponsorshipSignal, truncate } from "../util/text.ts";
+import { classifyWorkplace, decodeEntities, htmlToText, microdataProp, sponsorshipSignal, truncate } from "../util/text.ts";
 import { greenhouseEmbed, extractSalary, FETCHERS, smartrecruitersDescription, workdayParts } from "./sources.ts";
 
 const UA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0 Safari/537.36";
@@ -25,6 +25,7 @@ export async function resolveJob(input: CapturedJob): Promise<Job> {
   const url = input.url.trim();
   const found = one<{ id: string }>("SELECT id FROM jobs WHERE url = ? OR apply_url = ?", url, url);
   if (found) return getJob(found.id)!;
+  if (detectAts(url) === "linkedin") return resolveLinkedIn(url, input);
   const viaApi = await fromAtsApi(url).catch(() => null);
   if (viaApi) return upsertJob(viaApi).job;
 
@@ -265,22 +266,7 @@ export function detectAtsFromPage(url: string, html = ""): string {
 /** schema.org JobPosting as microdata (itemprop=…), used by SuccessFactors career sites and many others. */
 function fromMicrodata(html: string, url: string): JobInput | null {
   if (!/itemtype=["']https?:\/\/schema\.org\/JobPosting/i.test(html) && !/itemprop=["']title["']/i.test(html)) return null;
-  const prop = (name: string) => {
-    const meta = html.match(new RegExp(`<meta[^>]*itemprop=["']${name}["'][^>]*content=["']([^"']*)["']`, "i"));
-    if (meta) return meta[1];
-    const open = new RegExp(`<([a-z0-9]+)\\b[^>]*itemprop=["']${name}["'][^>]*>`, "i").exec(html);
-    if (!open) return "";
-    // Walk to the matching close tag, counting nested tags of the same name.
-    const tag = open[1].toLowerCase();
-    const re = new RegExp(`<(/?)${tag}\\b[^>]*>`, "gi");
-    re.lastIndex = open.index + open[0].length;
-    let depth = 1;
-    for (let m = re.exec(html); m; m = re.exec(html)) {
-      depth += m[1] ? -1 : 1;
-      if (depth === 0) return html.slice(open.index + open[0].length, m.index);
-    }
-    return html.slice(open.index + open[0].length, open.index + open[0].length + 20000);
-  };
+  const prop = (name: string) => microdataProp(html, name);
   const title = decodeEntities(htmlToText(prop("title"))).trim();
   if (!title) return null;
   const description = htmlToText(prop("description"));
@@ -302,4 +288,68 @@ function fromMicrodata(html: string, url: string): JobInput | null {
     postedAt: prop("datePosted") || undefined,
     sponsorsVisa: sponsorshipSignal(description),
   };
+}
+
+// ---------- LinkedIn ----------
+// LinkedIn shows the company's own apply link only to signed-in members, and Ferry never uses a LinkedIn login.
+// So: read the one public posting the user pasted, then look for the same role among the jobs Ferry already
+// watches on the company's ATS. Found → apply there. Not found → the job is kept with LinkedIn as its source,
+// and applying hands it back with what to do.
+
+export const linkedInJobId = (url: string) => url.match(/currentJobId=(\d{6,})/)?.[1] ?? url.match(/\/jobs\/view\/(?:[^/?#]*?-)?(\d{6,})/)?.[1] ?? null;
+
+const tagText = (html: string, cls: string) => {
+  const m = html.match(new RegExp(`class="[^"]*\\b${cls}\\b[^"]*"[^>]*>([\\s\\S]*?)</(?:a|h1|h2|h3|span|div)>`, "i"));
+  return m ? decodeEntities(htmlToText(m[1])).trim() : "";
+};
+
+async function resolveLinkedIn(url: string, input: CapturedJob): Promise<Job> {
+  const id = linkedInJobId(url);
+  let html = "";
+  if (id) {
+    try {
+      const res = await fetch(`https://www.linkedin.com/jobs-guest/jobs/api/jobPosting/${id}`, { headers: { "User-Agent": UA, "Accept-Language": "en-US" }, signal: AbortSignal.timeout(15000) });
+      if (res.ok) html = await res.text();
+      else console.warn(`[linkedin] posting ${id}: HTTP ${res.status}`);
+    } catch (e) {
+      console.warn(`[linkedin] posting ${id}: ${(e as Error).message}`); // fall back to what the user or extension gave us
+    }
+  }
+  const title = tagText(html, "topcard__title") || input.title || "LinkedIn job";
+  const company = tagText(html, "topcard__org-name-link") || input.company || "";
+  const location = tagText(html, "topcard__flavor--bullet") || input.location || "";
+  const descM = html.match(/class="[^"]*show-more-less-html__markup[^"]*"[^>]*>([\s\S]*?)<\/div>/i);
+  const description = descM ? htmlToText(descM[1]) : (input.description ?? "");
+  const easyApply = Boolean(html) && !/offsite-apply/.test(html);
+
+  // Same role on the company's own ATS, from the boards Ferry watches?
+  if (company) {
+    const norm = (s: string) => s.toLowerCase().replace(/[^a-z0-9 ]+/g, " ").replace(/\s+/g, " ").trim();
+    const want = new Set(norm(title).split(" "));
+    const rows = all<{ id: string; title: string }>("SELECT id, title FROM jobs WHERE closed_at IS NULL AND ats != 'linkedin' AND lower(company) = lower(?) LIMIT 400", company);
+    let best: { id: string; s: number } | null = null;
+    for (const r of rows) {
+      const have = new Set(norm(r.title).split(" "));
+      let inter = 0;
+      for (const w of want) if (have.has(w)) inter++;
+      const s = inter / Math.max(want.size, have.size);
+      if (s >= 0.8 && (!best || s > best.s)) best = { id: r.id, s };
+    }
+    if (best) return getJob(best.id)!;
+  }
+
+  return upsertJob({
+    companyId: null,
+    company: company || "Unknown company",
+    ats: "linkedin",
+    externalId: `linkedin:${id ?? url}`,
+    title,
+    location,
+    workplace: classifyWorkplace(location, description.slice(0, 2000)),
+    url,
+    applyUrl: url,
+    description: easyApply ? `${description}\n\n[LinkedIn Easy Apply]` : description,
+    salary: extractSalary(description),
+    sponsorsVisa: sponsorshipSignal(description),
+  }).job;
 }

@@ -67,7 +67,7 @@ after(async () => {
 test("LLM mode is on and requests use the documented contract", async () => {
   assert.equal(llmEnabled(), true);
   const jobs = (await call("GET", "/jobs/search?q=Acme&limit=10")).items;
-  const job = await call("GET", `/jobs/${jobs.find((j: any) => j.title.includes("Platform")).id}`);
+  const job = await call("GET", `/jobs/${jobs.find((j: any) => j.title === "Software Engineer, Platform").id}`);
   assert.ok(job.match);
   // Force an LLM-scored match through the fetch endpoint.
   const fetched = await call("POST", "/jobs/fetch", { url: job.url });
@@ -90,7 +90,7 @@ test("LLM mode is on and requests use the documented contract", async () => {
 
 test("tailoring, cover letter, and AI answers flow into a ready-to-send application", async () => {
   const jobs = (await call("GET", "/jobs/search?q=Acme&limit=10")).items;
-  const job = jobs.find((j: any) => j.title.includes("Platform"));
+  const job = jobs.find((j: any) => j.title === "Software Engineer, Platform");
   const created = await call("POST", "/applications", { jobId: job.id });
   const a = await waitFor(created.id, ["NEEDS_INPUT", "PENDING_SUBMIT_REVIEW", "FAILED"]);
   assert.equal(a.status, "PENDING_SUBMIT_REVIEW", a.error);

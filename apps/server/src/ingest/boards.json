@@ -863,5 +863,470 @@
   "name": "Workday",
   "ats": "workday",
   "board": "workday.wd5.myworkdayjobs.com|Workday"
+ },
+ {
+  "name": "Alliance Laundry Systems",
+  "ats": "icims",
+  "board": "uscareeropenings-alliancelaundry.icims.com"
+ },
+ {
+  "name": "AMERICAN SYSTEMS",
+  "ats": "icims",
+  "board": "careers-americansystems.icims.com"
+ },
+ {
+  "name": "AmTrust Financial",
+  "ats": "icims",
+  "board": "careers-amtrustgroup.icims.com"
+ },
+ {
+  "name": "Apogee Engineering",
+  "ats": "icims",
+  "board": "careers-apogeeusa.icims.com"
+ },
+ {
+  "name": "Blackhawk Network Holdings",
+  "ats": "icims",
+  "board": "careers-blackhawknetwork.icims.com"
+ },
+ {
+  "name": "Bruno Independent Living Aids",
+  "ats": "icims",
+  "board": "careers-bruno.icims.com"
+ },
+ {
+  "name": "Charles Schwab",
+  "ats": "icims",
+  "board": "career-schwab.icims.com"
+ },
+ {
+  "name": "Corgan",
+  "ats": "icims",
+  "board": "campus-us-corgan.icims.com"
+ },
+ {
+  "name": "D'Addario",
+  "ats": "icims",
+  "board": "careers-daddario.icims.com"
+ },
+ {
+  "name": "DecisionPoint",
+  "ats": "icims",
+  "board": "careers-decisionpointcorp.icims.com"
+ },
+ {
+  "name": "Empirical Foods",
+  "ats": "icims",
+  "board": "careers-empiricalfoods.icims.com"
+ },
+ {
+  "name": "Enterprise Holdings",
+  "ats": "icims",
+  "board": "us-erac.icims.com"
+ },
+ {
+  "name": "Federated Insurance",
+  "ats": "icims",
+  "board": "careers-federatedinsurance.icims.com"
+ },
+ {
+  "name": "Frontier Technology",
+  "ats": "icims",
+  "board": "careers-ftidefense.icims.com"
+ },
+ {
+  "name": "General Dynamics",
+  "ats": "icims",
+  "board": "careers-gdeb.icims.com"
+ },
+ {
+  "name": "General Dynamics Mission Systems",
+  "ats": "icims",
+  "board": "careers-gdms.icims.com"
+ },
+ {
+  "name": "Goldbelt",
+  "ats": "icims",
+  "board": "careers-goldbeltapex.icims.com"
+ },
+ {
+  "name": "Grow Financial Federal Credit Union",
+  "ats": "icims",
+  "board": "careers-growfinancial.icims.com"
+ },
+ {
+  "name": "H&R Block",
+  "ats": "icims",
+  "board": "careers-hrblock.icims.com"
+ },
+ {
+  "name": "Hexagon AB",
+  "ats": "icims",
+  "board": "careers-hexagonpositioning.icims.com"
+ },
+ {
+  "name": "Highgate",
+  "ats": "icims",
+  "board": "externalhourly-highgate.icims.com"
+ },
+ {
+  "name": "IDEMIA",
+  "ats": "icims",
+  "board": "uscareers-idemia.icims.com"
+ },
+ {
+  "name": "Iridium Communications",
+  "ats": "icims",
+  "board": "careers-iridium.icims.com"
+ },
+ {
+  "name": "ITT",
+  "ats": "icims",
+  "board": "careersenus-itt-inc.icims.com"
+ },
+ {
+  "name": "Lennox International",
+  "ats": "icims",
+  "board": "uscareers-lennox.icims.com"
+ },
+ {
+  "name": "Liberty Mutual",
+  "ats": "icims",
+  "board": "campus-libertymutual.icims.com"
+ },
+ {
+  "name": "Nakupuna Companies",
+  "ats": "icims",
+  "board": "careers-nakupuna.icims.com"
+ },
+ {
+  "name": "Peraton",
+  "ats": "icims",
+  "board": "careers-peraton.icims.com"
+ },
+ {
+  "name": "Riverside Research",
+  "ats": "icims",
+  "board": "careers-riversideresearch.icims.com"
+ },
+ {
+  "name": "RoviSys",
+  "ats": "icims",
+  "board": "careers-rovisys.icims.com"
+ },
+ {
+  "name": "SAS",
+  "ats": "icims",
+  "board": "careers-sas.icims.com"
+ },
+ {
+  "name": "Shure",
+  "ats": "icims",
+  "board": "careersus-shure.icims.com"
+ },
+ {
+  "name": "Southern Star Central Gas Pipeline",
+  "ats": "icims",
+  "board": "careers-sscgp.icims.com"
+ },
+ {
+  "name": "Springs Window Fashions",
+  "ats": "icims",
+  "board": "careers-springswindowfashions.icims.com"
+ },
+ {
+  "name": "SRI International",
+  "ats": "icims",
+  "board": "careers-sri.icims.com"
+ },
+ {
+  "name": "Steel Dynamics",
+  "ats": "icims",
+  "board": "careers-steeldynamics.icims.com"
+ },
+ {
+  "name": "Susquehanna International Group",
+  "ats": "icims",
+  "board": "careers-sig.icims.com"
+ },
+ {
+  "name": "URBN",
+  "ats": "icims",
+  "board": "homeoffice-na-urbn.icims.com"
+ },
+ {
+  "name": "W.R. Berkley",
+  "ats": "icims",
+  "board": "careers-berkley.icims.com"
+ },
+ {
+  "name": "West Bend Insurance",
+  "ats": "icims",
+  "board": "careers-thesilverlining.icims.com"
+ },
+ {
+  "name": "Western & Southern Financial Group",
+  "ats": "icims",
+  "board": "careers-westernsouthern.icims.com"
+ },
+ {
+  "name": "American Express",
+  "ats": "oraclecloud",
+  "board": "egug.fa.us2.oraclecloud.com|CX_1"
+ },
+ {
+  "name": "Arconic",
+  "ats": "oraclecloud",
+  "board": "hdnn.fa.us6.oraclecloud.com|CX"
+ },
+ {
+  "name": "AutoZone",
+  "ats": "oraclecloud",
+  "board": "egud.fa.us2.oraclecloud.com|CX_1"
+ },
+ {
+  "name": "Blue Cross Blue Shield of Michigan",
+  "ats": "oraclecloud",
+  "board": "ejko.fa.us2.oraclecloud.com|CX_3"
+ },
+ {
+  "name": "BNY",
+  "ats": "oraclecloud",
+  "board": "eofe.fa.us2.oraclecloud.com|CX_1001"
+ },
+ {
+  "name": "Citizens Financial Group",
+  "ats": "oraclecloud",
+  "board": "hcgn.fa.us2.oraclecloud.com|CX_1"
+ },
+ {
+  "name": "CSX",
+  "ats": "oraclecloud",
+  "board": "fa-eowa-saasfaprod1.fa.ocs.oraclecloud.com|CSXCareers"
+ },
+ {
+  "name": "Cummins",
+  "ats": "oraclecloud",
+  "board": "fa-espx-saasfaprod1.fa.ocs.oraclecloud.com|CX_1"
+ },
+ {
+  "name": "Dell Technologies",
+  "ats": "oraclecloud",
+  "board": "iawmqy.fa.ocs.oraclecloud.com|careers"
+ },
+ {
+  "name": "DTCC",
+  "ats": "oraclecloud",
+  "board": "ebxr.fa.us2.oraclecloud.com|CX_1"
+ },
+ {
+  "name": "Emerson Electric",
+  "ats": "oraclecloud",
+  "board": "hdjq.fa.us2.oraclecloud.com|CX_1"
+ },
+ {
+  "name": "EXL",
+  "ats": "oraclecloud",
+  "board": "fa-ewjt-saasfaprod1.fa.ocs.oraclecloud.com|CX_2"
+ },
+ {
+  "name": "GM financial",
+  "ats": "oraclecloud",
+  "board": "fa-exvu-saasfaprod1.fa.ocs.oraclecloud.com|CX_1"
+ },
+ {
+  "name": "GuideWell Mutual",
+  "ats": "oraclecloud",
+  "board": "fa-etum-saasfaprod1.fa.ocs.oraclecloud.com|CX_1"
+ },
+ {
+  "name": "Honeywell",
+  "ats": "oraclecloud",
+  "board": "ibqbjb.fa.ocs.oraclecloud.com|Honeywell"
+ },
+ {
+  "name": "Hormel Foods",
+  "ats": "oraclecloud",
+  "board": "ekkh.fa.us2.oraclecloud.com|CX_2002"
+ },
+ {
+  "name": "Hunt Oil Company",
+  "ats": "oraclecloud",
+  "board": "fa-eqcd-saasfaprod1.fa.ocs.oraclecloud.com|CX_1"
+ },
+ {
+  "name": "JP Morgan Chase",
+  "ats": "oraclecloud",
+  "board": "jpmc.fa.oraclecloud.com|CX_1001"
+ },
+ {
+  "name": "Lazard",
+  "ats": "oraclecloud",
+  "board": "icbpjb.fa.ocs.oraclecloud.com|LazardProfessionalCareers"
+ },
+ {
+  "name": "Legrand",
+  "ats": "oraclecloud",
+  "board": "iadugs.fa.ocs.oraclecloud.com|CX_1001"
+ },
+ {
+  "name": "Macy's",
+  "ats": "oraclecloud",
+  "board": "ebwh.fa.us2.oraclecloud.com|CX_1001"
+ },
+ {
+  "name": "Navy Federal",
+  "ats": "oraclecloud",
+  "board": "fa-etbx-saasfaprod1.fa.ocs.oraclecloud.com|nfcu"
+ },
+ {
+  "name": "Nokia",
+  "ats": "oraclecloud",
+  "board": "fa-evmr-saasfaprod1.fa.ocs.oraclecloud.com|CX_1"
+ },
+ {
+  "name": "NOV",
+  "ats": "oraclecloud",
+  "board": "egay.fa.us6.oraclecloud.com|CX_4001"
+ },
+ {
+  "name": "onsemi",
+  "ats": "oraclecloud",
+  "board": "hctz.fa.us2.oraclecloud.com|CX_1001"
+ },
+ {
+  "name": "Pella",
+  "ats": "oraclecloud",
+  "board": "ebgj.fa.us2.oraclecloud.com|CX_1"
+ },
+ {
+  "name": "Ralliant",
+  "ats": "oraclecloud",
+  "board": "ibwujb.fa.ocs.oraclecloud.com|CX_1001"
+ },
+ {
+  "name": "S&C Electric Company",
+  "ats": "oraclecloud",
+  "board": "ejia.fa.us6.oraclecloud.com|CX_1001"
+ },
+ {
+  "name": "SAIC",
+  "ats": "oraclecloud",
+  "board": "eihu.fa.us8.oraclecloud.com|CX"
+ },
+ {
+  "name": "Tradeweb",
+  "ats": "oraclecloud",
+  "board": "ecnf.fa.us2.oraclecloud.com|CX"
+ },
+ {
+  "name": "UL Solutions",
+  "ats": "oraclecloud",
+  "board": "fa-eups-saasfaprod1.fa.ocs.oraclecloud.com|ULSolutionsCareers"
+ },
+ {
+  "name": "Vertiv",
+  "ats": "oraclecloud",
+  "board": "egup.fa.us2.oraclecloud.com|CX"
+ },
+ {
+  "name": "WTW",
+  "ats": "oraclecloud",
+  "board": "eedu.fa.em3.oraclecloud.com|CX_1003"
+ },
+ {
+  "name": "🔥 Oracle",
+  "ats": "oraclecloud",
+  "board": "eeho.fa.us2.oraclecloud.com|CX_45001"
+ },
+ {
+  "name": "Acuity",
+  "ats": "successfactors",
+  "board": "careers.acuityinc.com"
+ },
+ {
+  "name": "Belden",
+  "ats": "successfactors",
+  "board": "careers.belden.com"
+ },
+ {
+  "name": "CMHC",
+  "ats": "successfactors",
+  "board": "careers.cmhc-schl.gc.ca"
+ },
+ {
+  "name": "Corning",
+  "ats": "successfactors",
+  "board": "corningjobs.corning.com"
+ },
+ {
+  "name": "Entergy",
+  "ats": "successfactors",
+  "board": "jobs.entergy.com"
+ },
+ {
+  "name": "Erie Insurance Group",
+  "ats": "successfactors",
+  "board": "jobs.erieinsurance.com"
+ },
+ {
+  "name": "HF Sinclair",
+  "ats": "successfactors",
+  "board": "careers.hfsinclair.com"
+ },
+ {
+  "name": "Huntington Ingalls Industries",
+  "ats": "successfactors",
+  "board": "careers.huntingtoningalls.com"
+ },
+ {
+  "name": "Phillips 66",
+  "ats": "successfactors",
+  "board": "careers.phillips66.com"
+ },
+ {
+  "name": "Qorvo",
+  "ats": "successfactors",
+  "board": "careers.qorvo.com"
+ },
+ {
+  "name": "Southern Glazer's Wine & Spirits",
+  "ats": "successfactors",
+  "board": "recruiting.southernglazers.com"
+ },
+ {
+  "name": "United Launch Alliance",
+  "ats": "successfactors",
+  "board": "jobs.ulalaunch.com"
+ },
+ {
+  "name": "W.W. Grainger",
+  "ats": "successfactors",
+  "board": "jobs.grainger.com"
+ },
+ {
+  "name": "Westinghouse Electric Company",
+  "ats": "successfactors",
+  "board": "careers.westinghousenuclear.com"
+ },
+ {
+  "name": "Textron",
+  "ats": "taleo",
+  "board": "textron.taleo.net|textron"
+ },
+ {
+  "name": "Textron",
+  "ats": "taleo",
+  "board": "textron.taleo.net|textron"
+ },
+ {
+  "name": "Zions Bancorporation",
+  "ats": "taleo",
+  "board": "zionsbancorp.taleo.net|joinexternalmobile"
+ },
+ {
+  "name": "Zions Bank",
+  "ats": "taleo",
+  "board": "zionsbancorp.taleo.net|joinexternalmobile"
  }
 ]

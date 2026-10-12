@@ -32,6 +32,8 @@ async function visibleCount(frame: Frame, sel: string) {
 /** The frame that holds the auth form (Workday and others sometimes use iframes). */
 async function authFrame(page: Page): Promise<Frame> {
   for (const f of page.frames()) if ((await visibleCount(f, "input[type=password]")) > 0) return f;
+  // Email-first sign-in inside an iframe (iCIMS): the frame with a visible email box.
+  for (const f of page.frames()) if (f !== page.mainFrame() && (await visibleCount(f, "input[type=email], input[name*=email i], input[id*=email i]")) > 0) return f;
   return page.mainFrame();
 }
 
@@ -65,7 +67,7 @@ export async function detectAuthState(page: Page): Promise<AuthState> {
   if (
     hasEmail &&
     others <= 2 &&
-    (/\/(login|signin|sign-in|apply\/email)\b/i.test(page.url()) ||
+    (/\/(login|signin|sign-in|apply\/email|talentcommunity\/apply)\b/i.test(`${page.url()} ${frame.url()}`) ||
       /sign in|log in|returning candidate|enter your email|we('ll| will) (send|email) (you )?(a|an) (code|link|one-time)|continue with email|verify your email address/.test(text.slice(0, 1500)))
   )
     return "email_first";
@@ -90,12 +92,14 @@ async function clickByText(page: Page, re: RegExp, roles = "button, input[type=s
   return false;
 }
 
+/** The editable email/username box (read-only echoes of an email already given don't count). */
 async function emailInput(frame: Frame): Promise<Locator | null> {
-  const typed = frame.locator("input[type=email]:visible");
+  const editable = ":not([readonly]):not([disabled])";
+  const typed = frame.locator(`input[type=email]:visible${editable}`);
   if (await typed.count()) return typed.first();
-  const byLabel = frame.getByLabel(/e-?mail|username|user name/i);
+  const byLabel = frame.getByLabel(/e-?mail|username|user name/i).and(frame.locator(`input${editable}`));
   if (await byLabel.count()) return byLabel.first();
-  const named = frame.locator("input[name*=email i]:visible, input[id*=email i]:visible, input[autocomplete=username]:visible, input[name*=user i]:visible");
+  const named = frame.locator(["input[name*=email i]", "input[id*=email i]", "input[autocomplete=username]", "input[name*=user i]"].map((s) => `${s}:visible${editable}`).join(", "));
   return (await named.count()) ? named.first() : null;
 }
 
@@ -193,11 +197,11 @@ export async function handleAuth(page: Page, ctx: AuthContext): Promise<{ ok: tr
         `Creating your candidate account at ${host} (${acct.email}) with ${acct.passwordKind === "application" ? "your application password" : "a generated password (saved in Settings → Employer accounts)"}`,
         "action",
       );
-      const emails = frame.locator("input[type=email]:visible");
+      const emails = frame.locator("input[type=email]:visible:not([readonly]):not([disabled])");
       const ec = await emails.count();
       if (ec) for (let i = 0; i < ec; i++) await emails.nth(i).fill(acct.email);
-      else (await emailInput(frame))?.fill(acct.email);
-      const pws = frame.locator("input[type=password]:visible");
+      else await (await emailInput(frame))?.fill(acct.email).catch(() => {});
+      const pws = frame.locator("input[type=password]:visible:not([readonly]):not([disabled])");
       for (let i = 0, n = await pws.count(); i < n; i++) await pws.nth(i).fill(acct.password);
       for (const [re, v] of [
         [/first name|given name/i, ctx.user.profile.personal.firstName],

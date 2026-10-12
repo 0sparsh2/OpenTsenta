@@ -72,7 +72,7 @@ after(async () => {
 test("sandbox jobs are matched with reasons", async () => {
   const res = await call("GET", "/jobs/search?q=Acme&limit=10&sort=match");
   assert.ok(res.items.length >= 3);
-  const platform = res.items.find((j: any) => j.title.includes("Platform"));
+  const platform = res.items.find((j: any) => j.title === "Software Engineer, Platform");
   const detail = await call("GET", `/jobs/${platform.id}`);
   assert.ok(detail.match.score >= 60, `score ${detail.match.score}`);
   assert.ok(detail.match.reasons.length > 0);
@@ -80,7 +80,7 @@ test("sandbox jobs are matched with reasons", async () => {
 
 test("one-page form: fills, writes the open question for this job, submits your edit after review", async () => {
   const jobs = (await call("GET", "/jobs/search?q=Acme&limit=10")).items;
-  const job = jobs.find((j: any) => j.title.includes("Platform"));
+  const job = jobs.find((j: any) => j.title === "Software Engineer, Platform");
   const created = await call("POST", "/applications", { jobId: job.id });
   assert.ok(created.profile?.name, "application is pinned to a profile");
   let a = await waitFor(created.id, ["NEEDS_INPUT", "PENDING_SUBMIT_REVIEW", "FAILED"]);
@@ -255,4 +255,51 @@ test("account walls: with creation off (or in a dry run) nothing is typed and no
   assert.equal(await page.inputValue("#p1"), "");
   assert.equal(listAccounts(user.id).length, before, "no account record");
   await page.close();
+});
+
+test("Oracle Recruiting-style: email + terms, emailed code in split boxes, two steps, submitted", async () => {
+  const { enterpriseSubmissions } = await import("../src/mock/enterprise.ts");
+  const job = (await call("GET", "/jobs/search?q=Data%20Platform&limit=5")).items.find((j: any) => j.title === "Data Platform Engineer");
+  assert.ok(job, "sandbox Oracle-style job seeded");
+  const created = await call("POST", "/applications", { jobId: job.id });
+  let a = await waitFor(created.id, ["NEEDS_INPUT", "PENDING_SUBMIT_REVIEW", "FAILED"], 180000);
+  const trace = () => a.trace.map((t: any) => t.text).join(" | ");
+  assert.equal(a.status, "PENDING_SUBMIT_REVIEW", `${a.status}: ${a.error} :: ${trace().slice(-600)}`);
+  assert.match(trace(), /Signing in to .* with test@ferry\.local/);
+  assert.match(trace(), /verification code/);
+  assert.equal(a.totalPages, 2);
+  await call("POST", `/applications/${a.id}/approve`, {});
+  a = await waitFor(a.id, ["COMPLETED", "FAILED", "NEEDS_INPUT"], 180000);
+  assert.equal(a.status, "COMPLETED", `${a.error} :: ${trace().slice(-600)}`);
+  const sub = enterpriseSubmissions.filter((s) => s.kind === "orc").at(-1)!;
+  assert.equal(sub.email, "test@ferry.local");
+  assert.equal(sub.data.previous, "No");
+  assert.equal(sub.data.noncompete, "No");
+  assert.equal(sub.data.authorized, "Yes");
+  assert.equal(sub.data.signature, "Alex Morgan");
+  assert.ok(sub.files.resume > 1000);
+});
+
+test("iCIMS-style: posting in an iframe, email-first login, account created, profile form, submitted", async () => {
+  const { enterpriseSubmissions } = await import("../src/mock/enterprise.ts");
+  const job = (await call("GET", "/jobs/search?q=Payments&limit=5")).items.find((j: any) => j.title === "Backend Engineer, Payments");
+  assert.ok(job, "sandbox iCIMS-style job seeded");
+  const created = await call("POST", "/applications", { jobId: job.id });
+  let a = await waitFor(created.id, ["NEEDS_INPUT", "PENDING_SUBMIT_REVIEW", "FAILED"], 180000);
+  const trace = () => a.trace.map((t: any) => t.text).join(" | ");
+  assert.equal(a.status, "PENDING_SUBMIT_REVIEW", `${a.status}: ${a.error} :: ${trace().slice(-600)}`);
+  assert.match(trace(), /Creating your candidate account/);
+  const byLabel = (l: string) => a.fields.find((f: any) => f.label.startsWith(l));
+  assert.equal(byLabel("State").value, "California");
+  assert.equal(byLabel("Zip Code").value, "94105");
+  await call("POST", `/applications/${a.id}/approve`, {});
+  a = await waitFor(a.id, ["COMPLETED", "FAILED", "NEEDS_INPUT"], 180000);
+  assert.equal(a.status, "COMPLETED", `${a.error} :: ${trace().slice(-600)}`);
+  const sub = enterpriseSubmissions.filter((s) => s.kind === "icims").at(-1)!;
+  assert.equal(sub.data.state, "California");
+  assert.equal(sub.data.adult, "Yes");
+  assert.equal(sub.data.sponsorship, "No");
+  assert.match(sub.data.gender, /not wish/i);
+  const acct = await call("GET", `/applications/${a.id}/account`);
+  assert.ok(acct.account, "the application shows the account it used");
 });

@@ -21,6 +21,8 @@ export interface CompanyRef {
 
 type Fetcher = (c: CompanyRef) => Promise<JobInput[]>;
 
+import { ENTERPRISE_FETCHERS, enterpriseDescription } from "./enterprise.ts";
+
 // ---------- Greenhouse ----------
 interface GhJob {
   id: number;
@@ -342,10 +344,12 @@ async function workableDescription(externalId: string): Promise<string> {
   return htmlToText(`${d.description ?? ""}\n${d.requirements ?? ""}\n${d.benefits ?? ""}`);
 }
 
-export const FETCHERS: Record<string, Fetcher> = { greenhouse, lever, ashby, smartrecruiters, recruitee, workday, workable };
+export const FETCHERS: Record<string, Fetcher> = { greenhouse, lever, ashby, smartrecruiters, recruitee, workday, workable, ...ENTERPRISE_FETCHERS };
 
 /** Sources whose list APIs omit descriptions; fetched on demand (opening, scoring, applying). */
-export async function fetchDescription(ats: string, externalId: string): Promise<string> {
+export async function fetchDescription(ats: string, externalId: string, url?: string): Promise<string> {
+  const enterprise = await enterpriseDescription(ats, externalId, url);
+  if (enterprise != null) return enterprise;
   if (ats === "smartrecruiters") {
     const [board, id] = externalId.split(":");
     return smartrecruitersDescription(board, id);

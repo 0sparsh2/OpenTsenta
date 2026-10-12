@@ -14,7 +14,7 @@ find ──▶ prep ──▶ apply ──▶ track
  │        │        └ Playwright agent: account wall (sign in / create + email-code verify) → fields → profile rules,
  │        │          memory, Claude → fill → read-back → review gate → submit → confirmation
  │        └ per-role résumé rewrite (diff + ATS keyword score), cover letter, ATS-safe PDF
- └ 173 boards on Greenhouse · Lever · Ashby · Workday · Workable · SmartRecruiters · Recruitee (~25k roles)
+ └ 266 boards on Greenhouse · Ashby · Lever · Workday · iCIMS · Oracle Recruiting · SuccessFactors · Taleo · SmartRecruiters · Workable
 ```
 
 ## Quick start
@@ -66,6 +66,30 @@ and the confirmation email land in your inbox and move the tracker.
 | CLI | `npx ferry …` | `apps/cli` |
 | Accounts | Password + email verification, magic links, reset, sessions, API tokens, rate limits | `session.ts` |
 | Billing | Stripe Checkout subscriptions, portal, signed idempotent webhooks, 30-day credit cycles | `billing.ts` |
+
+## Job-site coverage
+
+Measured with `scripts/coverage.ts`, which runs real postings through the agent in dry-run mode with a throwaway persona.
+Real submission and account creation are forced off in these runs. Flows behind an account wall are verified end to
+end against local sandboxes that mirror them.
+
+| ATS | Finding jobs | Applying |
+|---|---|---|
+| Greenhouse | Public API, 89 boards | One-page forms, including jobs on company sites (routed to Greenhouse's hosted form) |
+| Ashby | Public API, 50 boards | One-page forms with custom questions |
+| Lever | Public API | One-page forms (the site's language switcher is ignored) |
+| Workday | Public jobs API | Account creation with your application password, emailed code, multi-step forms (sandbox). Real tenants stop at the account wall in dry runs. |
+| iCIMS | Search pages, 41 boards | Iframe postings, email-first sign-in, account creation, profile form (sandbox) |
+| Oracle Recruiting | Public REST API, 34 boards | Email + terms, emailed one-time code in split boxes, multi-step forms (sandbox) |
+| SuccessFactors | Career-site search, 14 boards | Sign-in and the talent-community email step are recognized. Tenants with a captcha on sign-in are handed back. |
+| Taleo | Public REST search, 4 boards | The account wall is recognized. The flow behind it isn't sandboxed yet. |
+| SmartRecruiters | Public API | Forms sit behind DataDome bot protection; handed back with your documents ready |
+| Workable | Public API | One-page forms |
+| LinkedIn | Paste a job link | Matched to the same role on the company's own ATS when Ferry watches it. Otherwise handed back: Ferry never uses your LinkedIn login. |
+| Anything else | Paste a job link (JSON-LD or microdata) | Generic form agent, plus the Claude navigator when a key is set |
+
+Ferry never solves captchas or bot checks. Those applications land in "Finish it yourself" with the posting, your
+tailored résumé, and the account to sign in with.
 
 ## What needs your keys to go live
 
@@ -134,16 +158,19 @@ Or use `npx ferry token <api-token>`. Then run `ferry matches`, `ferry apply <jo
 ## Tests and tools
 
 ```bash
-npm test                                                  # 29 end-to-end + integration tests, no network or keys needed
+npm test                                                  # 32 end-to-end + integration tests, no network or keys needed
 npx tsx apps/server/scripts/inspect-form.ts <job-url>     # read-only: the fields the agent would see on a real form
 npx tsx apps/server/scripts/inspect-workday.ts <url>      # read-only: walk a real Workday posting to its sign-in step
+npx tsx apps/server/scripts/inspect-apply.ts <url>        # read-only: follow Apply on any posting to its form or sign-in wall
+npx tsx apps/server/scripts/coverage.ts --ats ashby --per 6   # dry-run sweep of real postings, report per ATS
 npx tsx apps/server/scripts/discover-boards.ts            # re-verify and grow the watched board list
 npx tsx apps/server/scripts/test-extension.ts             # loads the Chrome extension in Chromium and drives the panel
 ```
 
 The suite covers:
 
-- the full apply loop on all three sandbox employers, including Workday account creation with your application password and email-code verification;
+- the full apply loop on five sandbox employers: a one-page form, a wizard, Workday (account creation with your application password, emailed code), Oracle Recruiting (email + one-time code in split boxes), and iCIMS (iframe posting, email-first sign-in, account creation);
+- account walls never crossed when account creation is off or in a dry run;
 - résumé profiles, templates, the page limit (verified against the real PDF page count), Word export, and "keep my design";
 - the answer library: fixed answers, per-job written answers, and the auto-write switch;
 - prompt-to-modify edits and the preview-before-applying pause;

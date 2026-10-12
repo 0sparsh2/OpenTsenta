@@ -218,6 +218,8 @@ const RULES: Rule[] = [
   { re: /cover ?letter/, kinds: ["textarea"], maxLen: 60, value: (c) => c.coverText },
   // identity
   { re: /\bfirst name\b|given name|^preferred (first )?name/, kinds: ["text", "combobox"], maxLen: 50, value: (c) => c.profile.personal.firstName },
+  // Typed signatures and attestations: the legal name, exactly.
+  { re: /e-?signature|electronic signature|digital signature|type your (full )?(legal )?name|full legal name|signature.*(full|legal) name/, kinds: ["text"], value: (c) => `${c.profile.personal.firstName} ${c.profile.personal.lastName}`.trim() || undefined },
   { re: /\blast name\b|family name|surname/, kinds: ["text", "combobox"], maxLen: 50, value: (c) => c.profile.personal.lastName },
   { re: /^(full |legal |your )?name$/, kinds: ["text"], value: (c) => `${c.profile.personal.firstName} ${c.profile.personal.lastName}`.trim() },
   { re: /e-?mail/, kinds: ["text", "email"], maxLen: 50, not: /opt|consent|subscribe|newsletter/, value: (c) => c.profile.personal.email },

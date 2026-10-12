@@ -147,10 +147,13 @@ type BrowserPage = Awaited<ReturnType<Awaited<ReturnType<typeof newApplyContext>
 async function waitForContent(page: BrowserPage, timeoutMs = 15000) {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
-    const ready = await page
-      .evaluate(() => (document.body?.innerText?.trim().length ?? 0) > 200 || document.querySelectorAll("input:not([type=hidden]), textarea, select").length > 0)
-      .catch(() => false);
-    if (ready) return;
+    // Any frame counts: iCIMS and others put the whole posting inside an iframe.
+    for (const f of page.frames()) {
+      const ready = await f
+        .evaluate(() => (document.body?.innerText?.trim().length ?? 0) > 200 || document.querySelectorAll("input:not([type=hidden]), textarea, select").length > 0)
+        .catch(() => false);
+      if (ready) return;
+    }
     await sleep(400);
   }
 }
@@ -181,12 +184,33 @@ async function openForm(run: Run, page: BrowserPage, target: string): Promise<{ 
     });
     return r.ok ? null : r.reason;
   };
-  const usable = (f: FrameField[]) => f.filter((x) => x.kind !== "checkbox").length >= 2;
+  // Job-search boxes, filters and job-alert sign-ups sit on many career pages; they aren't the application.
+  const NOT_APPLICATION = /search|keyword|sort by|category|radius|distance|(job )?alert|how often|filter|results page|location\b.*\(all\)|^(all|any) keywords|subscribe|newsletter/i;
+  const applicationFields = (f: FrameField[]) => f.filter((x) => !NOT_APPLICATION.test(x.label) && !(x.options ?? []).slice(0, 2).some((o) => /^\(all\)$/i.test(o)));
+  const usable = (f: FrameField[]) => applicationFields(f).filter((x) => x.kind !== "checkbox").length >= 2;
 
+  if (job.ats === "linkedin") {
+    const easy = /\[LinkedIn Easy Apply\]/.test(job.description);
+    return {
+      blocked: easy
+        ? "This is a LinkedIn Easy Apply job, which only works inside LinkedIn with your account. Your tailored résumé is ready to download: apply on LinkedIn, then mark it done here."
+        : `LinkedIn only shows ${job.company}'s application link to signed-in members, and Ferry doesn't use your LinkedIn login. Click Apply on LinkedIn, then paste the company's application page into Ferry and it takes over from there.`,
+    };
+  }
   const resp = await page.goto(target, { waitUntil: "domcontentloaded", timeout: config.pageTimeoutMs });
   await settle();
   const head = (await pageText(page)).slice(0, 1500);
-  if (resp?.status() === 404 || CLOSED_RE.test(head)) {
+  // A posting link that lands on the site's home or job search has been taken down.
+  const path = (u: string) => {
+    try {
+      return new URL(u).pathname.replace(/\/+$/, "");
+    } catch {
+      return "";
+    }
+  };
+  const SEARCHY = /\/jobs\/search|\/search\/?\?|[?&](ss|q)=/i;
+  const redirectedToSearch = (SEARCHY.test(page.url()) && !SEARCHY.test(target)) || (path(page.url()) === "" && path(target).length > 1);
+  if (resp?.status() === 404 || CLOSED_RE.test(head) || redirectedToSearch) {
     dbRun("UPDATE jobs SET closed_at = ? WHERE id = ?", now(), job.id);
     return { blocked: "This posting has been taken down or is no longer accepting applications", closed: true };
   }
@@ -194,11 +218,41 @@ async function openForm(run: Run, page: BrowserPage, target: string): Promise<{ 
   if (blocked) return { blocked };
   let fields = await extractFields(page);
   if (!usable(fields)) {
-    const entry = await findApplyEntry(page);
+    // Single-page career sites render the Apply button after the rest of the page (and after cookie banners).
+    let entry = await findApplyEntry(page);
+    for (let i = 0; !entry && i < 12; i++) {
+      await sleep(500);
+      entry = await findApplyEntry(page);
+      if (!entry && usable(await extractFields(page))) break;
+    }
+    if (!entry) fields = await extractFields(page);
     if (entry) {
       run.think("Found the Apply button on the posting; opening the form", "action");
+      // Keep the application in this tab: links that open a new window are followed here instead.
+      await entry.evaluate((el) => el.closest("a")?.removeAttribute("target")).catch(() => {});
+      const before = page.url();
+      const pagesBefore = page.context().pages().length;
       await entry.click();
+      // A new tab shows up within a second or so if the link opens one.
+      let opened: typeof page | null = null;
+      for (let i = 0; i < 6 && !opened; i++) {
+        await sleep(200);
+        const pages = page.context().pages();
+        if (pages.length > pagesBefore) opened = pages[pages.length - 1];
+      }
+      if (opened) {
+        await opened.waitForLoadState("domcontentloaded").catch(() => {});
+        const url = opened.url();
+        await opened.close().catch(() => {});
+        if (url && url !== "about:blank") await page.goto(url, { waitUntil: "domcontentloaded", timeout: config.pageTimeoutMs });
+      }
       await settle();
+      // Single-page apps change route after the click and render later; wait (up to 8s) for a form or a sign-in screen.
+      for (let i = 0; i < 16; i++) {
+        if (usable(await extractFields(page)) || (await detectAuthState(page)) !== "none") break;
+        if (i > 4 && page.url() === before) break; // nothing happened at all
+        await sleep(500);
+      }
       const manual = await findApplyManual(page);
       if (manual) {
         run.think("Choosing Apply Manually", "action");
@@ -218,7 +272,7 @@ async function openForm(run: Run, page: BrowserPage, target: string): Promise<{ 
       fields = await extractFields(page);
     }
   }
-  if (!fields.length) {
+  if (!usable(fields)) {
     const wall = await botWall(page);
     if (wall)
       return {
@@ -226,7 +280,7 @@ async function openForm(run: Run, page: BrowserPage, target: string): Promise<{ 
       };
     return { blocked: "Couldn't find the application form on the page" };
   }
-  return { fields };
+  return { fields: applicationFields(fields) };
 }
 
 /** Stage 2: drive the ATS form in a real browser. */

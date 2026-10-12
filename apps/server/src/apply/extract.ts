@@ -135,6 +135,12 @@ function collectFields(prefix: string) {
         const t = textOf(q);
         if (t && t.length < 400) return t;
       }
+      // Plain text before the options (<span class="q">Question?</span><label><input type=radio> Yes</label>…).
+      for (const child of Array.from(container.children) as HTMLElement[]) {
+        if (child.querySelector("input, select, textarea, button") || /^(INPUT|SELECT|TEXTAREA|BUTTON)$/.test(child.tagName)) continue;
+        const t = textOf(child);
+        if (t && t.length < 400) return t;
+      }
     }
     const owner = container ?? first;
     const start = (container ?? first.closest("label") ?? first).parentElement;
