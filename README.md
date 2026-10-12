@@ -158,7 +158,7 @@ Or use `npx ferry token <api-token>`. Then run `ferry matches`, `ferry apply <jo
 ## Tests and tools
 
 ```bash
-npm test                                                  # 32 end-to-end + integration tests, no network or keys needed
+npm test                                                  # 34 end-to-end + integration tests, no network or keys needed
 npx tsx apps/server/scripts/inspect-form.ts <job-url>     # read-only: the fields the agent would see on a real form
 npx tsx apps/server/scripts/inspect-workday.ts <url>      # read-only: walk a real Workday posting to its sign-in step
 npx tsx apps/server/scripts/inspect-apply.ts <url>        # read-only: follow Apply on any posting to its form or sign-in wall

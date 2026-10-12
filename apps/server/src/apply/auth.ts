@@ -56,13 +56,16 @@ export async function detectAuthState(page: Page): Promise<AuthState> {
     .catch(() => 0);
   // Split code boxes (one digit each), as Oracle Recruiting and others use.
   const digitBoxes = await frame.locator("input[maxlength='1']:visible").count().catch(() => 0);
-  if ((codeInputs > 0 || digitBoxes >= 4) && /verif|one-time|we sent|sent (you )?(a|an|the) (code|email)|enter the code|(enter|type) (the|your) (\d-digit |verification |security |one-time )?code/.test(text)) return "verify_code";
-  if (/(check|verify) your (email|inbox)|we('ve| have) sent (you )?(an email|a (verification )?link)|click the link (in|we)|activate your account/.test(text)) return "verify_link";
-  // Email-first sign-in (iCIMS, Oracle Recruiting, ADP, Phenom): one email box, maybe a terms checkbox, nothing else.
   const others = await frame
-    .locator("input:visible:not([type=hidden]):not([type=checkbox]):not([type=radio]):not([type=submit]):not([type=button]):not([type=search]), select:visible, textarea:visible")
+    .locator("input:visible:not([type=hidden]):not([type=checkbox]):not([type=radio]):not([type=submit]):not([type=button]):not([type=search]):not([maxlength='1']), select:visible, textarea:visible")
     .count()
     .catch(() => 0);
+  // Verification screens are sparse; a page that already shows an application form isn't one (Greenhouse keeps
+  // its submit-time security-code boxes in the form).
+  const sparse = others <= 3;
+  if (sparse && (codeInputs > 0 || digitBoxes >= 4) && /verif|one-time|we sent|sent (you )?(a|an|the) (code|email)|enter the code|(enter|type) (the|your) (\d-digit |verification |security |one-time )?code/.test(text)) return "verify_code";
+  if (sparse && /(check|verify) your (email|inbox)|we('ve| have) sent (you )?(an email|a (verification )?link)|click the link (in|we)|activate your account/.test(text)) return "verify_link";
+  // Email-first sign-in (iCIMS, Oracle Recruiting, ADP, Phenom): one email box, maybe a terms checkbox, nothing else.
   const hasEmail = (await frame.locator("input[type=email]:visible, input[name*=email i]:visible, input[id*=email i]:visible, input[autocomplete=email]:visible").count().catch(() => 0)) > 0;
   if (
     hasEmail &&
@@ -243,18 +246,7 @@ export async function handleAuth(page: Page, ctx: AuthContext): Promise<{ ok: tr
       if (!v) return { ok: false, reason: "The verification email didn't arrive. Connect your inbox (Settings → Email) so Ferry can read verification codes, or verify the account yourself." };
       if (state === "verify_code" && v.code) {
         ctx.think(`Entering the verification code from "${v.message.subject}"`, "action");
-        const boxes = frame.locator("input[maxlength='1']:visible");
-        const nBoxes = await boxes.count();
-        if (nBoxes >= 4 && nBoxes >= v.code.length) {
-          // One digit per box: type into the first and let the page advance, else fill each.
-          for (let i = 0; i < v.code.length; i++) await boxes.nth(i).fill(v.code[i]);
-          if (!(await clickByText(page, /^(verify|submit|continue|confirm|next)$/i))) await boxes.nth(v.code.length - 1).press("Enter");
-        } else {
-          const codeField = frame.locator("input:visible").filter({ hasNot: frame.locator("[type=password]") });
-          const target = (await frame.getByLabel(/code|verification|otp|pin/i).count()) ? frame.getByLabel(/code|verification|otp|pin/i).first() : codeField.first();
-          await target.fill(v.code);
-          if (!(await clickByText(page, /^(verify|submit|continue|confirm|next)$/i))) await target.press("Enter");
-        }
+        await enterCode(page, frame, v.code, /^(verify|submit|continue|confirm|next)$/i);
       } else if (v.link) {
         ctx.think("Opening the verification link from your inbox", "action");
         await page.goto(v.link, { waitUntil: "domcontentloaded" });
@@ -265,4 +257,40 @@ export async function handleAuth(page: Page, ctx: AuthContext): Promise<{ ok: tr
     }
   }
   return { ok: false, reason: "Got stuck on the employer's sign-in screens" };
+}
+
+/** Type a code into split one-character boxes or a single code field, then press the given button. */
+async function enterCode(page: Page, frame: Frame, code: string, button: RegExp) {
+  const boxes = frame.locator("input[maxlength='1']:visible");
+  const nBoxes = await boxes.count();
+  if (nBoxes >= 4 && nBoxes >= code.length) {
+    for (let i = 0; i < code.length; i++) await boxes.nth(i).fill(code[i]);
+    if (!(await clickByText(page, button))) await boxes.nth(code.length - 1).press("Enter");
+    return;
+  }
+  const codeField = frame.locator("input:visible").filter({ hasNot: frame.locator("[type=password]") });
+  const labelled = frame.getByLabel(/code|verification|otp|pin/i);
+  const target = (await labelled.count()) ? labelled.first() : codeField.first();
+  await target.fill(code);
+  if (!(await clickByText(page, button))) await target.press("Enter");
+}
+
+const SUBMIT_CODE_TEXT = /(verification|security) code (has been |was )?sent|enter the (\d+-character |\d-digit )?(security |verification )?code|code (to|in order to) (submit|complete)|check your (email|inbox) for (a|the) code/i;
+
+/**
+ * Some boards (Greenhouse's fraud check) email a security code after Submit and hold the application until it's
+ * entered. Read it from the inbox, enter it, and submit again. "none" when no such prompt is showing.
+ */
+export async function submitTimeCode(page: Page, ctx: { user: User; job: Job; think: AuthContext["think"] }, since: Date): Promise<"none" | "entered" | { fail: string }> {
+  const text = await pageText(page);
+  if (!SUBMIT_CODE_TEXT.test(text)) return "none";
+  let frame = page.mainFrame();
+  for (const f of page.frames()) if ((await visibleCount(f, "input[maxlength='1']")) >= 4 || (await f.getByLabel(/security code|verification code/i).count().catch(() => 0)) > 0) frame = f;
+  ctx.think("The employer emailed a security code to finish submitting; reading it from your inbox", "action");
+  const hints = [ctx.job.company.replace(/\(.*?\)/g, "").trim().split(/\s+/)[0], "greenhouse", "security code"].filter(Boolean);
+  const v = await waitForVerification(ctx.user.id, { since, senderHints: hints, timeoutMs: 120_000, prefer: "code" });
+  if (!v?.code) return { fail: "The employer's security code email didn't arrive. Connect your inbox (Settings → Email) so Ferry can read it, or submit the application yourself." };
+  ctx.think(`Entering the security code from "${v.message.subject}"`, "action");
+  await enterCode(page, frame, v.code, /^(submit( application)?|verify|confirm|continue)$/i);
+  return "entered";
 }

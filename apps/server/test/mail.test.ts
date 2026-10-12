@@ -15,6 +15,8 @@ test("extracts verification codes in common phrasings", () => {
     ["Your one-time passcode is AB12CD34. It expires in 10 minutes.", "AB12CD34"],
     ["Enter this security code: 019283 to continue", "019283"],
     ["Hi,\n\n553201\n\nThis is your sign in code.", "553201"],
+    ["Copy and paste this code into the security code field on your application: Ab3dE9xQ\n\nThanks", "Ab3dE9xQ"],
+    ["Use this code to continue your application: 482913\n\nIt expires in 15 minutes.", "482913"],
   ];
   for (const [text, want] of cases) assert.equal(extractVerification({ subject: "Verify", text }).code, want, text);
 });

@@ -25,7 +25,7 @@ import {
 } from "../store.ts";
 import type { FilledField, PipelineStatus, TraceStep } from "../types.ts";
 import { answerFields, memorable, missingRequired } from "./answer.ts";
-import { detectAuthState, handleAuth } from "./auth.ts";
+import { detectAuthState, handleAuth, submitTimeCode } from "./auth.ts";
 import { extractFields, pageText, type FrameField } from "./extract.ts";
 import { botWall, CONFIRMATION_RE, dismissCookieBanner, fillField, findApplyEntry, findApplyManual, findNext, findSubmit, hasCaptcha, probeComboboxOptions, verifyAndRepair, visibleErrors } from "./fill.ts";
 import { navigate } from "./navigator.ts";
@@ -220,7 +220,7 @@ async function openForm(run: Run, page: BrowserPage, target: string): Promise<{ 
   if (!usable(fields)) {
     // Single-page career sites render the Apply button after the rest of the page (and after cookie banners).
     let entry = await findApplyEntry(page);
-    for (let i = 0; !entry && i < 12; i++) {
+    for (let i = 0; !entry && i < 20; i++) {
       await sleep(500);
       entry = await findApplyEntry(page);
       if (!entry && usable(await extractFields(page))) break;
@@ -417,9 +417,20 @@ async function execute(run: Run, opts: RunOptions) {
       const submitBtn = await findSubmit(page);
       if (!submitBtn) throw new Error("Couldn't find the submit button");
       run.think(attempt ? "Submitting again after fixing the flagged fields" : "Submitting the application", "action");
+      const clickedAt = new Date();
       await submitBtn.click();
       await page.waitForLoadState("networkidle", { timeout: 15000 }).catch(() => {});
       await sleep(1500);
+      // Emailed security code before the submission counts (Greenhouse fraud check).
+      const sc = await submitTimeCode(page, { user, job, think: (t, k) => run.think(t, k) }, clickedAt);
+      if (typeof sc === "object") {
+        run.status("NEEDS_INPUT", { error: sc.fail });
+        return;
+      }
+      if (sc === "entered") {
+        await page.waitForLoadState("networkidle", { timeout: 15000 }).catch(() => {});
+        await sleep(1500);
+      }
       const text = await pageText(page);
       const confirmed = CONFIRMATION_RE.test(text) || /confirm|thank|success/i.test(page.url());
       if (confirmed) {

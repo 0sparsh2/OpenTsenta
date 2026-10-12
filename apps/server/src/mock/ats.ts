@@ -1,7 +1,9 @@
+import crypto from "node:crypto";
 import { Hono } from "hono";
 import { config } from "../config.ts";
 import { upsertJob } from "../store.ts";
 import { WD_JOBS, workday } from "./workday.ts";
+import { deliverLocal } from "../mail/index.ts";
 import { ENTERPRISE_JOBS, icims, orc } from "./enterprise.ts";
 
 // A sandbox employer ("Acme Robotics") with two application styles, so the full
@@ -42,7 +44,8 @@ We sponsor visas. Salary $150,000 - $195,000 + equity.`,
   },
   {
     id: "1002",
-    style: "acme",
+    // Greenhouse-style fraud check: Submit emails a security code that must be entered to finish.
+    style: "secure",
     title: "Frontend Engineer, Operator Console",
     location: "San Francisco, CA (Hybrid)",
     description: `Build the console operators use to supervise robot fleets in real time.
@@ -141,7 +144,7 @@ const acmeForm = (j: (typeof JOBS)[number]) => `
 <h1>${j.title}</h1><div class="loc">Acme Robotics · ${j.location}</div>
 <pre>${j.description}</pre>
 <h2>Apply for this job</h2>
-<form id="application_form" method="post" action="/mock-ats/acme/jobs/${j.id}/submit" enctype="multipart/form-data" novalidate>
+<form id="application_form" method="post" action="/mock-ats/${j.style}/jobs/${j.id}/submit" enctype="multipart/form-data" novalidate>
   <div class="field"><label for="first_name">First Name *</label><input id="first_name" name="first_name" type="text" required></div>
   <div class="field"><label for="last_name">Last Name *</label><input id="last_name" name="last_name" type="text" required></div>
   <div class="field"><label for="email">Email *</label><input id="email" name="email" type="email" required></div>
@@ -229,6 +232,8 @@ mockAts.get("/:style/jobs/:id", (c) => {
   return c.html(page(`${j.title} - Acme Robotics`, j.style === "wizard" ? wizardForm(j) : acmeForm(j)));
 });
 
+const pendingSecure = new Map<string, { code: string; sub: Omit<Submission, "id"> }>();
+
 mockAts.post("/:style/jobs/:id/submit", async (c) => {
   const body = await c.req.parseBody({ all: false });
   const fields: Record<string, string> = {};
@@ -238,7 +243,35 @@ mockAts.post("/:style/jobs/:id/submit", async (c) => {
       if (v.size) files.push({ field: k, name: v.name, size: v.size });
     } else fields[k] = String(v);
   }
-  const sub: Submission = { id: `sub_${submissions.length + 1}`, job: `${c.req.param("style")}:${c.req.param("id")}`, at: new Date().toISOString(), fields, files };
+  const draft = { job: `${c.req.param("style")}:${c.req.param("id")}`, at: new Date().toISOString(), fields, files };
+  if (c.req.param("style") === "secure") {
+    // Hold the application and email an 8-character security code, as Greenhouse does on some boards.
+    const token = crypto.randomBytes(8).toString("hex");
+    const code = crypto.randomBytes(4).toString("hex").toUpperCase().slice(0, 8);
+    pendingSecure.set(token, { code, sub: draft });
+    deliverLocal({ to: (fields.email ?? "").toLowerCase(), from: "no-reply@us.greenhouse-mail.local", fromName: "Acme Robotics (via Greenhouse)", subject: "Security code for your application to Acme Robotics", text: `Copy and paste this code into the security code field on your application: ${code}` });
+    return c.html(
+      page(
+        "Verify your application",
+        `<h1>Security code</h1><p>A verification code was sent to ${(fields.email ?? "").replace(/</g, "&lt;")}. Enter the 8-character code to submit your application.</p>
+<form method="post" action="/mock-ats/secure/jobs/${c.req.param("id")}/verify"><input type="hidden" name="token" value="${token}">
+<div class="code">${Array.from({ length: 8 }, (_, i) => `<input type="text" maxlength="1" name="c${i}" aria-label="Security code character ${i + 1}" style="width:36px;text-align:center">`).join("")}</div>
+<p><button type="submit">Submit application</button></p></form>`,
+      ),
+    );
+  }
+  const sub: Submission = { id: `sub_${submissions.length + 1}`, ...draft };
+  submissions.push(sub);
+  return c.redirect(`/mock-ats/confirmation/${sub.id}`);
+});
+
+mockAts.post("/secure/jobs/:id/verify", async (c) => {
+  const b = await c.req.parseBody();
+  const held = pendingSecure.get(String(b.token ?? ""));
+  const code = Array.from({ length: 8 }, (_, i) => String(b[`c${i}`] ?? "")).join("").toUpperCase();
+  if (!held || held.code !== code) return c.html(page("Verify your application", `<p class="err">That security code is incorrect.</p>`), 400);
+  pendingSecure.delete(String(b.token));
+  const sub: Submission = { id: `sub_${submissions.length + 1}`, ...held.sub };
   submissions.push(sub);
   return c.redirect(`/mock-ats/confirmation/${sub.id}`);
 });

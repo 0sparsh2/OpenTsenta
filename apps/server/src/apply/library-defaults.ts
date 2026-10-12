@@ -18,7 +18,7 @@ export const BUILTINS: Builtin[] = [
     id: "why_company",
     question: "Why are you interested in joining {company}?",
     mode: "write",
-    re: /why (are|were) you (interested|excited|applying|drawn)|why (do|would) you (want|like) to (join|work|be)|why d you like to (join|work)|what (interests|excites|attracts|draws|appeals to) you|why (this|our|the) (company|role|team|position|opportunity)|why (join|work (at|for)) company|interest(ed)? in (joining|working)|why company|motivat(es|ion|ed) you to apply|what made you (decide to |want to )?apply|why did you apply/,
+    re: /why (are|were) you (interested|excited|applying|drawn)|why you('re| are) (interested|excited|applying|drawn)|what makes you (excited|interested|want)|why (do|would) you (want|like) to (join|work|be)|why d you like to (join|work)|what (interests|excites|attracts|draws|appeals to) you|why (this|our|the) (company|role|team|position|opportunity)|why (join|work (at|for)) company|interest(ed)? in (joining|working)|why company|motivat(es|ion|ed) you to apply|what made you (decide to |want to )?apply|why did you apply/,
     hint: "What genuinely draws you (products you use, mission, team). Ferry weaves it into each answer.",
   },
   {

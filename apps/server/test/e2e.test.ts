@@ -303,3 +303,19 @@ test("iCIMS-style: posting in an iframe, email-first login, account created, pro
   const acct = await call("GET", `/applications/${a.id}/account`);
   assert.ok(acct.account, "the application shows the account it used");
 });
+
+test("security code after Submit (Greenhouse-style): read from the inbox, entered, submitted", async () => {
+  const job = (await call("GET", "/jobs/search?q=Operator%20Console&limit=5")).items.find((j: any) => j.title.startsWith("Frontend Engineer, Operator Console"));
+  const created = await call("POST", "/applications", { jobId: job.id });
+  let a = await waitFor(created.id, ["NEEDS_INPUT", "PENDING_SUBMIT_REVIEW", "FAILED"], 180000);
+  const trace = () => a.trace.map((t: any) => t.text).join(" | ");
+  if (a.status === "NEEDS_INPUT") {
+    const missing = a.fields.filter((f: any) => f.required && (f.value == null || f.value === ""));
+    await call("POST", `/applications/${a.id}/approve`, { fields: missing.map((f: any) => ({ id: f.id, value: "Answer" })) });
+  } else await call("POST", `/applications/${a.id}/approve`, {});
+  a = await waitFor(a.id, ["COMPLETED", "FAILED", "NEEDS_INPUT"], 180000);
+  assert.equal(a.status, "COMPLETED", `${a.error} :: ${trace().slice(-500)}`);
+  assert.match(trace(), /security code/i);
+  const sub = (await (await fetch(`http://localhost:${PORT}/mock-ats/submissions`)).json()).at(-1);
+  assert.equal(sub.job, "secure:1002");
+});

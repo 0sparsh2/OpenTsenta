@@ -160,6 +160,8 @@ export async function fetchMail(userId: string, since: Date): Promise<MailMessag
 // ---------- verification codes and links ----------
 
 const CODE_PATTERNS = [
+  // "Copy and paste this code into the security code field on your application: Ab3dE9xQ" (Greenhouse)
+  /\bcode\b[^\n]{0,80}?:\s*([A-Z0-9]{6,10})\s*(?:$|\n)/im,
   /(?:verification|security|one[- ]time|confirmation|access|login|sign[- ]in)\s*(?:code|pin|passcode)\b[^0-9A-Z]{0,40}([0-9]{4,8}|[A-Z0-9]{6,8})\b/i,
   /\b(?:code|pin|passcode|otp)\s*(?:is|:)\s*([0-9]{4,8}|[A-Z0-9]{6,8})\b/i,
   /\b(?:use|enter|type)\s+(?:the\s+|this\s+)?(?:code|pin|passcode)\s+([0-9]{4,8}|[A-Z0-9]{6,8})\b/i,
