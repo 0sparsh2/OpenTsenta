@@ -1,0 +1,440 @@
+import { z } from "zod";
+import { structured, llmEnabled } from "../llm.ts";
+import { resumeText } from "../match/score.ts";
+import { normalizeQuestion } from "../store.ts";
+import type { FilledField, FormField, Job, Profile, ResumeDoc } from "../types.ts";
+import { truncate } from "../util/text.ts";
+import { fillPlaceholders, genericQuestion, isOpenEnded, matchEntry, withDefaults, writeAnswers, type WriteItem } from "./library.ts";
+
+export interface AnswerContext {
+  profile: Profile;
+  doc: ResumeDoc;
+  job: Job;
+  resumePdf: string | null;
+  /** Your own Word design with the tailored text, when the profile uses "Keep my design". */
+  resumeDocx?: string | null;
+  coverPdf: string | null;
+  coverText: string | null;
+  /** Fields from a previous run of this application (user edits from review win). */
+  prior: FilledField[];
+  /** The résumé profile's notes for the agent. */
+  notes?: string;
+  /** Draft open-ended answers for this job (Settings → autoWriteAnswers). */
+  autoWrite?: boolean;
+}
+
+type Value = string | string[] | null;
+
+const COUNTRY_NAMES: Record<string, string> = {
+  US: "United States",
+  CA: "Canada",
+  GB: "United Kingdom",
+  IN: "India",
+  DE: "Germany",
+  FR: "France",
+  AU: "Australia",
+  SG: "Singapore",
+  NL: "Netherlands",
+  IE: "Ireland",
+};
+const countryName = (c?: string) => (c ? (COUNTRY_NAMES[c.toUpperCase()] ?? c) : "");
+
+const withScheme = (u?: string) => (u ? (/^https?:\/\//i.test(u) ? u : `https://${u.replace(/^\/+/, "")}`) : undefined);
+
+const US_STATES: Record<string, string> = {
+  AL: "Alabama", AK: "Alaska", AZ: "Arizona", AR: "Arkansas", CA: "California", CO: "Colorado", CT: "Connecticut", DE: "Delaware", DC: "District of Columbia",
+  FL: "Florida", GA: "Georgia", HI: "Hawaii", ID: "Idaho", IL: "Illinois", IN: "Indiana", IA: "Iowa", KS: "Kansas", KY: "Kentucky", LA: "Louisiana", ME: "Maine",
+  MD: "Maryland", MA: "Massachusetts", MI: "Michigan", MN: "Minnesota", MS: "Mississippi", MO: "Missouri", MT: "Montana", NE: "Nebraska", NV: "Nevada",
+  NH: "New Hampshire", NJ: "New Jersey", NM: "New Mexico", NY: "New York", NC: "North Carolina", ND: "North Dakota", OH: "Ohio", OK: "Oklahoma", OR: "Oregon",
+  PA: "Pennsylvania", RI: "Rhode Island", SC: "South Carolina", SD: "South Dakota", TN: "Tennessee", TX: "Texas", UT: "Utah", VT: "Vermont", VA: "Virginia",
+  WA: "Washington", WV: "West Virginia", WI: "Wisconsin", WY: "Wyoming",
+};
+/** "CA" → "California" when the form lists full state names. */
+function stateValue(region: string | undefined, options?: string[]) {
+  if (!region) return undefined;
+  const full = US_STATES[region.toUpperCase()];
+  if (full && options?.some((o) => o.toLowerCase() === full.toLowerCase())) return full;
+  return region;
+}
+
+const DECLINE_RE = /decline|prefer not|don.?t wish|do not wish|not to (say|answer|disclose|self)|choose not|i don.?t want/i;
+
+// ---------- option matching ----------
+
+const tokens = (s: string) => new Set(s.toLowerCase().replace(/[^a-z0-9 ]+/g, " ").split(/\s+/).filter((w) => w.length > 1));
+function jaccard(a: string, b: string) {
+  const A = tokens(a);
+  const B = tokens(b);
+  if (!A.size || !B.size) return 0;
+  let i = 0;
+  for (const x of A) if (B.has(x)) i++;
+  return i / (A.size + B.size - i);
+}
+
+/** "5-7", "8+", "10 or more", "less than 2" → does n fall inside? */
+function inRange(label: string, n: number): boolean | null {
+  const l = label.toLowerCase().replace(/years?|yrs?/g, "").trim();
+  let m = l.match(/^(\d+(?:\.\d+)?)\s*(?:-|–|to)\s*(\d+(?:\.\d+)?)$/);
+  if (m) return n >= Number(m[1]) && n <= Number(m[2]);
+  m = l.match(/^(\d+(?:\.\d+)?)\s*(?:\+|or more|and above|plus)$/) ?? l.match(/^(?:more than|over|at least)\s*(\d+(?:\.\d+)?)/);
+  if (m) return n >= Number(m[1]);
+  m = l.match(/^(?:less than|under|fewer than|<)\s*(\d+(?:\.\d+)?)/);
+  if (m) return n < Number(m[1]);
+  m = l.match(/^(\d+(?:\.\d+)?)$/);
+  if (m) return Number(m[1]) === n;
+  return null;
+}
+
+export function pickOption(options: string[] | undefined, desired: string): string | null {
+  if (!options?.length || !desired) return null;
+  const d = desired.toLowerCase().trim();
+  const o = options.map((x) => ({ x, l: x.toLowerCase().trim() }));
+  if (/^\d+(\.\d+)?$/.test(d)) {
+    const hit = o.find((p) => inRange(p.l, Number(d)) === true);
+    if (hit) return hit.x;
+  }
+  if (d === "__decline__") return o.find((p) => DECLINE_RE.test(p.l))?.x ?? null;
+  if (/^(yes|true|y)$/.test(d)) return o.find((p) => /^yes\b/.test(p.l))?.x ?? o.find((p) => /\byes\b/.test(p.l))?.x ?? null;
+  if (/^(no|false|n)$/.test(d)) return o.find((p) => /^no\b/.test(p.l))?.x ?? o.find((p) => /\bno\b/.test(p.l))?.x ?? null;
+  return (
+    o.find((p) => p.l === d)?.x ??
+    o.find((p) => p.l.startsWith(d) || d.startsWith(p.l))?.x ??
+    o.find((p) => p.l.includes(d) || (p.l.length > 3 && d.includes(p.l)))?.x ??
+    (() => {
+      const best = o.map((p) => ({ ...p, s: jaccard(p.l, d) })).sort((a, b) => b.s - a.s)[0];
+      return best && best.s >= 0.34 ? best.x : null;
+    })()
+  );
+}
+
+// ---------- rules ----------
+
+interface Rule {
+  re: RegExp;
+  kinds?: FormField["kind"][];
+  not?: RegExp;
+  /** Labels longer than this are questions, not simple fields (e.g. "Do you have 2 years of mobile experience?"). */
+  maxLen?: number;
+  value: (c: AnswerContext, f: FormField) => Value | undefined;
+}
+
+const TEXTY: FormField["kind"][] = ["text", "email", "tel", "url", "number", "textarea", "combobox"];
+const CHOICE: FormField["kind"][] = ["select", "radio", "combobox", "checkbox"];
+
+const yes = (b: boolean | undefined) => (b === undefined ? undefined : b ? "Yes" : "No");
+const AFFIRM_RE = /^(yes\b|i (acknowledge|agree|confirm|consent|understand|have read|have reviewed|certify|attest|accept)|agree|acknowledged?|confirm(ed)?|accept|understood|i do\b)/i;
+
+function jobCountry(job: Job): string | null {
+  const l = job.location.toLowerCase();
+  if (/united states|\busa\b|\bus\b|remote.?us|new york|san francisco|seattle|austin|boston|chicago|los angeles|denver/.test(l)) return "US";
+  if (/canada|toronto|vancouver/.test(l)) return "CA";
+  if (/united kingdom|\buk\b|london/.test(l)) return "GB";
+  if (/india|bengaluru|bangalore|hyderabad|mumbai|pune|delhi/.test(l)) return "IN";
+  return null;
+}
+
+/** Everything that names where the candidate lives, for "do you live in one of: ..." questions. */
+function homeNames(c: AnswerContext): string[] {
+  const p = c.profile.personal;
+  const st = p.region ? US_STATES[p.region.toUpperCase()] : undefined;
+  const ctry = countryName(p.country);
+  const names = [p.city, st, ctry, p.country === "US" ? "united states" : "", p.country === "US" ? "usa" : "", p.country === "US" ? "u.s." : ""];
+  return names.filter((x): x is string => Boolean(x)).map((x) => x.toLowerCase());
+}
+
+/** Pick the option that best states the candidate's work authorization. */
+function authorizationOption(c: AnswerContext, f: FormField): string | undefined {
+  if (!f.options?.length) return yes(c.profile.workAuth.authorizedCountries.includes(jobCountry(c.job) ?? c.profile.workAuth.authorizedCountries[0] ?? "US"));
+  const needs = c.profile.workAuth.needsSponsorship;
+  const authorized = c.profile.workAuth.authorizedCountries.includes(jobCountry(c.job) ?? "US");
+  const opts = f.options.map((o) => ({ o, l: o.toLowerCase() }));
+  const yn = pickOption(f.options, authorized ? "yes" : "no");
+  if (yn && f.options.length <= 3) return yn;
+  if (authorized && !needs) return opts.find((x) => /authori[sz]ed|citizen|permanent resident|green card|eligible/.test(x.l) && !/not |require|need|sponsor/.test(x.l))?.o;
+  if (needs) return opts.find((x) => /require|need|sponsor/.test(x.l))?.o;
+  return opts.find((x) => /not authori[sz]ed|no\b/.test(x.l))?.o;
+}
+
+const RULES: Rule[] = [
+  // documents
+  { re: /resume|cv\b|curriculum/, kinds: ["file"], value: (c, f) => (c.resumeDocx && (!f.accept || /docx|word|officedocument/i.test(f.accept)) ? c.resumeDocx : c.resumePdf) },
+  { re: /cover ?letter/, kinds: ["file"], value: (c) => c.coverPdf },
+  { re: /cover ?letter/, kinds: ["textarea"], maxLen: 60, value: (c) => c.coverText },
+  // identity
+  { re: /\bfirst name\b|given name|^preferred (first )?name/, kinds: ["text", "combobox"], maxLen: 50, value: (c) => c.profile.personal.firstName },
+  { re: /\blast name\b|family name|surname/, kinds: ["text", "combobox"], maxLen: 50, value: (c) => c.profile.personal.lastName },
+  { re: /^(full |legal |your )?name$/, kinds: ["text"], value: (c) => `${c.profile.personal.firstName} ${c.profile.personal.lastName}`.trim() },
+  { re: /e-?mail/, kinds: ["text", "email"], maxLen: 50, not: /opt|consent|subscribe|newsletter/, value: (c) => c.profile.personal.email },
+  { re: /phone|mobile( number)?$|telephone/, kinds: ["text", "tel"], maxLen: 40, not: /type|opt|consent|sms/, value: (c) => c.profile.personal.phone },
+  { re: /linkedin/, kinds: ["text", "url"], maxLen: 60, value: (c) => withScheme(c.profile.personal.linkedin) },
+  { re: /github/, kinds: ["text", "url"], maxLen: 60, value: (c) => withScheme(c.profile.personal.github) },
+  { re: /website|portfolio|personal (site|url)|blog/, kinds: ["text", "url"], maxLen: 60, value: (c) => withScheme(c.profile.personal.website || c.profile.personal.github || c.profile.personal.linkedin) },
+  { re: /pronoun/, maxLen: 80, value: (c) => c.profile.personal.pronouns },
+  // location
+  {
+    re: /^(current )?(location|city)|where are you (currently )?(located|based)|city.*(state|country)|location \(city\)|what is your location|where do you intend to work|where will you (be )?(work|working|based)|intended work location|where do you (currently )?(live|reside)/,
+    maxLen: 70,
+    value: (c, f) => {
+      const p = c.profile.personal;
+      const city = [p.city, p.region, p.country && p.country !== "US" ? countryName(p.country) : ""].filter(Boolean).join(", ") || undefined;
+      if (!f.options?.length || f.kind === "combobox") return city;
+      // Option lists are often countries or states rather than cities.
+      return (city && pickOption(f.options, city)) ?? (p.region ? pickOption(f.options, US_STATES[p.region.toUpperCase()] ?? p.region) : null) ?? pickOption(f.options, countryName(p.country)) ?? undefined;
+    },
+  },
+  { re: /^country( of residence)?$|which country|country where you (currently )?(live|reside)|select the country/, maxLen: 80, value: (c) => countryName(c.profile.personal.country) || undefined },
+  { re: /^state( \/ province)?$|^province$|state of residence|^state province$/, value: (c, f) => stateValue(c.profile.personal.region, f.options) },
+  { re: /address line 1|^address$|street address|^address 1$/, kinds: TEXTY, value: (c) => c.profile.personal.address1 },
+  { re: /postal code|zip( code)?|postcode/, kinds: TEXTY, maxLen: 30, value: (c) => c.profile.personal.postalCode },
+  { re: /phone (device )?type|type of phone/, kinds: CHOICE, value: () => "Mobile" },
+  // "Do you live in one of the following states/countries: ...?" / "Are you located in the US?"
+  {
+    re: /(do|are) you (currently )?(live|living|reside|residing|based|located)( in| within)|(are|do) you (currently )?based in any of/,
+    kinds: [...CHOICE, "text"],
+    value: (c, f) => {
+      const q = f.label.toLowerCase();
+      const hit = homeNames(c).some((n) => n.length > 2 ? q.includes(n) : new RegExp(`\\b${n}\\b`).test(q)) || (c.profile.personal.country === "US" && /\bus\b|\bu\.s\.|united states/.test(q));
+      if (!f.options?.length) return hit ? "Yes" : "No";
+      const yn = pickOption(f.options, hit ? "yes" : "no");
+      if (yn && f.options.length <= 4) return yn;
+      // The options are the places themselves: choose where the candidate lives.
+      const p = c.profile.personal;
+      return pickOption(f.options, countryName(p.country)) ?? (p.region ? pickOption(f.options, US_STATES[p.region.toUpperCase()] ?? p.region) : null) ?? pickOption(f.options, "other") ?? undefined;
+    },
+  },
+  // background
+  { re: /current (company|employer)|most recent (company|employer)|current or previous employer/, kinds: TEXTY, maxLen: 45, not: /why|leav|reason/, value: (c) => c.doc.experience[0]?.company },
+  { re: /current (job )?title|current (role|position)|most recent (job )?title|current or previous job title/, kinds: TEXTY, maxLen: 45, not: /why|leav|reason|describe|responsib/, value: (c) => c.doc.experience[0]?.title },
+  { re: /^(school|university|college|institution)( name)?$|school or university|university or college|which (school|university)|^education institution/, value: (c) => c.doc.education[0]?.school },
+  { re: /^degree( type)?$|highest (level of )?(education|degree)/, value: (c) => c.doc.education[0]?.degree },
+  { re: /^(discipline|major|field of study)$|area of study/, value: (c) => c.doc.education[0]?.field },
+  { re: /graduation (date|year)|year of graduation/, maxLen: 60, value: (c) => c.doc.education[0]?.end },
+  { re: /\bgpa\b/, maxLen: 40, value: (c) => c.doc.education[0]?.gpa },
+  { re: /years of (professional |relevant |work )?experience/, kinds: ["text", "number", "select", "radio", "combobox"], value: (c) => (c.profile.logistics.yearsOfExperience != null ? String(c.profile.logistics.yearsOfExperience) : undefined) },
+  // logistics
+  { re: /salary|compensation expectation|desired (pay|compensation)|expected (pay|compensation)/, kinds: TEXTY, value: (c) => c.profile.logistics.salaryExpectation },
+  { re: /notice period/, kinds: TEXTY, value: (c) => c.profile.logistics.noticePeriod },
+  { re: /start date|when (can|could) you start|earliest (start|available)/, kinds: TEXTY, value: (c) => c.profile.logistics.earliestStart },
+  {
+    re: /(how|where) did you (first )?(hear|find|learn|see|come across)|how you (first )?(heard|found|learned)|hear about (this|the|us)|how did you find (out|us)|^source$|referral source|referred by/,
+    kinds: [...CHOICE, "text"],
+    value: (_c, f) => (f.options?.length ? (pickOption(f.options, "company website") ?? pickOption(f.options, "careers page") ?? pickOption(f.options, "job board") ?? pickOption(f.options, "other")) : "Company careers page"),
+  },
+  // eligibility
+  { re: /(legally )?(authori[sz]ed|eligible|permitted) to work|authori[sz]ation to work|work authori[sz]ation/, value: (c, f) => authorizationOption(c, f) },
+  { re: /sponsor|visa (status|support)|require.*(visa|immigration)|h-?1b/, value: (c) => yes(c.profile.workAuth.needsSponsorship) },
+  { re: /relocat/, value: (c) => yes(c.profile.logistics.willingToRelocate) },
+  { re: /(previously|ever) (been )?(employed|worked|applied)|worked (at|for) .* before|former employee|(have you )?ever worked for/, value: () => "No" },
+  { re: /(at least|over) 18|18 years|age of majority/, value: () => "Yes" },
+  // voluntary self-identification
+  { re: /gender|sex\b/, kinds: ["select", "radio", "combobox"], maxLen: 60, value: (c) => c.profile.eeo.gender ?? "__decline__" },
+  { re: /hispanic|latin[oa]/, kinds: ["select", "radio", "combobox"], value: (c) => c.profile.eeo.hispanic ?? "__decline__" },
+  { re: /\brace\b|ethnicity/, kinds: ["select", "radio", "combobox"], maxLen: 60, value: (c) => c.profile.eeo.race ?? "__decline__" },
+  { re: /veteran/, kinds: ["select", "radio", "combobox"], value: (c) => c.profile.eeo.veteran ?? "__decline__" },
+  { re: /disabilit/, kinds: ["select", "radio", "combobox"], value: (c) => c.profile.eeo.disability ?? "__decline__" },
+  { re: /passport country|country of citizenship|citizenship|nationality/, maxLen: 70, value: (c, f) => {
+      const cz = c.profile.workAuth.citizenship;
+      if (!cz) return undefined;
+      return f.options?.length ? (pickOption(f.options, countryName(cz)) ?? undefined) : countryName(cz);
+    } },
+  // consents and acknowledgements
+  { re: /share (my|your) (resume|information|data|profile|contact)|third.?part(y|ies)|external .*partners/, kinds: ["checkbox", "select", "radio", "combobox"], value: (_c, f) => (f.options?.length ? (pickOption(f.options, "no") ?? undefined) : "No") },
+  { re: /(text|sms) message|marketing|newsletter|talent community|whatsapp/, kinds: ["checkbox", "select", "radio", "combobox"], value: (_c, f) => (f.options?.length ? (pickOption(f.options, "no") ?? undefined) : "No") },
+  { re: /privacy|consent|acknowledg|i agree|terms|certify|attest|accurate and complete|double.?check|i have read|true and correct/, kinds: ["checkbox"], value: () => "Yes" },
+  {
+    re: /privacy|consent|acknowledg|i agree|terms|certify|attest|accurate and complete|double.?check|i have read|true and correct/,
+    kinds: ["select", "radio", "combobox"],
+    value: (_c, f) => f.options?.find((o) => AFFIRM_RE.test(o.trim())) ?? (f.options?.length === 1 ? f.options[0] : undefined),
+  },
+];
+
+function fromRules(c: AnswerContext, field: FormField): { value: Value; source: FilledField["source"] } | null {
+  const label = normalizeQuestion(field.label);
+  if (!label) return null;
+  // Button dropdowns behave like selects for answering purposes.
+  const f: FormField = field.kind === "listbox" ? { ...field, kind: "select" } : field;
+  for (const r of RULES) {
+    if (r.kinds && !r.kinds.includes(f.kind)) continue;
+    if (r.maxLen && label.length > r.maxLen) continue;
+    if (!r.re.test(label) || r.not?.test(label)) continue;
+    const v = r.value(c, f);
+    if (v == null || v === "") continue;
+    const source = r.re.source.includes("resume") || r.re.source.includes("cover") ? "resume" : v === "__decline__" ? "default" : "profile";
+    return { value: v, source };
+  }
+  return null;
+}
+
+function fromMemory(c: AnswerContext, f: FormField): string | null {
+  const q = normalizeQuestion(f.label);
+  if (!q) return null;
+  if (c.profile.answers[q]) return c.profile.answers[q];
+  let best: { s: number; v: string } | null = null;
+  for (const [k, v] of Object.entries(c.profile.answers)) {
+    const s = jaccard(k, q);
+    if (s >= 0.75 && (!best || s > best.s)) best = { s, v };
+  }
+  return best?.v ?? null;
+}
+
+// ---------- LLM ----------
+
+const AnswerSchema = z.object({
+  answers: z.array(
+    z.object({
+      id: z.string(),
+      value: z.string().describe("The answer. For fields with options, copy one option exactly (checkbox groups: options joined with ' | '). Empty string if you cannot answer."),
+      needs_user: z.boolean().describe("true when the answer depends on facts not in the profile/résumé"),
+      confidence: z.number(),
+    }),
+  ),
+});
+
+async function llmAnswers(c: AnswerContext, fields: FormField[]) {
+  const p = c.profile;
+  const out = await structured({
+    system: `You fill job application forms on behalf of the candidate, in their voice.
+Rules:
+- Use only facts from the profile, résumé, and saved answers. Never invent credentials, employers, dates, or numbers.
+- For fields with options, the value must be one of the options verbatim.
+- Open-ended questions ("Why this company?", "Tell us about a project"): 60-150 words, first person, specific to the job and the candidate's real experience, no clichés.
+- Yes/no eligibility questions: answer from the work-authorization facts.
+- If a field asks for something unknowable from the data (e.g. a referral name, a security clearance number), return an empty value and needs_user=true.`,
+    effort: "medium",
+    schema: AnswerSchema,
+    prompt: `<job title="${c.job.title}" company="${c.job.company}" location="${c.job.location}">
+${truncate(c.job.description, 7000)}
+</job>
+
+<profile>
+Name: ${p.personal.firstName} ${p.personal.lastName}; email ${p.personal.email}; phone ${p.personal.phone ?? ""}
+Location: ${[p.personal.city, p.personal.region, p.personal.country].filter(Boolean).join(", ")}
+Work authorization: ${p.workAuth.authorizedCountries.join(", ")}; needs sponsorship: ${p.workAuth.needsSponsorship}
+Salary expectation: ${p.logistics.salaryExpectation ?? "n/a"}; notice: ${p.logistics.noticePeriod ?? "n/a"}; start: ${p.logistics.earliestStart ?? "n/a"}; relocate: ${p.logistics.willingToRelocate ?? "n/a"}
+${c.notes ? `Notes for applications like this: ${c.notes}\n` : ""}Saved answers:
+${Object.entries(p.answers)
+  .slice(0, 40)
+  .map(([q, a]) => `- ${q}: ${truncate(a, 300)}`)
+  .join("\n")}
+</profile>
+
+<resume>
+${truncate(resumeText(c.doc), 8000)}
+</resume>
+
+<fields>
+${JSON.stringify(fields.map((f) => ({ id: f.id, label: f.label, kind: f.kind, required: f.required, options: f.options })))}
+</fields>`,
+  });
+  return out.answers;
+}
+
+// ---------- main ----------
+
+export async function answerFields(c: AnswerContext, fields: FormField[]): Promise<FilledField[]> {
+  const result: FilledField[] = [];
+  const pending: FormField[] = [];
+  const toWrite: WriteItem[] = [];
+  const autoWrite = c.autoWrite ?? true;
+  const library = withDefaults(c.profile.library);
+  const priorByLabel = new Map(c.prior.filter((p) => p.source === "user" && p.value != null).map((p) => [normalizeQuestion(p.label), p]));
+  const ask = (f: FormField, note = "Needs your input"): FilledField => ({ ...f, value: null, source: "unanswered", confidence: 0, note: f.required ? note : undefined });
+
+  for (const f of fields) {
+    const prior = priorByLabel.get(normalizeQuestion(f.label));
+    if (prior) {
+      result.push({ ...f, value: prior.value, source: "user", confidence: 1 });
+      continue;
+    }
+    const rule = fromRules(c, f);
+    if (rule) {
+      let value = rule.value;
+      if (typeof value === "string" && f.options?.length && f.kind !== "file") value = pickOption(f.options, value) ?? (value === "__decline__" ? null : value);
+      if (value != null) {
+        result.push({ ...f, value, source: rule.source, confidence: 0.95 });
+        continue;
+      }
+    }
+    // Answer library: your fixed answer, or a fresh one written for this job.
+    const entry = matchEntry(library, f, c.job);
+    if (entry) {
+      if (entry.mode === "fixed" && entry.answer.trim()) {
+        result.push({ ...f, value: fillPlaceholders(entry.answer.trim(), c.job), source: "library", confidence: 0.95 });
+      } else if (entry.mode === "write") {
+        if (autoWrite) toWrite.push({ field: f, entry });
+        else result.push(ask(f, "Auto-written answers are off"));
+      } else {
+        // A fixed question you haven't answered: never guess it.
+        result.push(entry.builtin === "additional" && !f.required ? { ...f, value: null, source: "default", confidence: 1 } : ask(f, "Add your answer in Answers to reuse it"));
+      }
+      continue;
+    }
+    const mem = fromMemory(c, f);
+    if (mem) {
+      result.push({ ...f, value: f.options?.length ? (pickOption(f.options, mem) ?? mem) : mem, source: "memory", confidence: 0.85 });
+      continue;
+    }
+    if (f.kind === "file") {
+      result.push({ ...f, value: null, source: "unanswered", confidence: 0 });
+      continue;
+    }
+    if (isOpenEnded(f)) {
+      if (autoWrite) toWrite.push({ field: f, entry: null });
+      else result.push(ask(f, "Auto-written answers are off"));
+      continue;
+    }
+    pending.push(f);
+  }
+
+  if (toWrite.length) {
+    const written = await writeAnswers({ profile: c.profile, doc: c.doc, job: c.job, notes: c.notes ?? "" }, toWrite);
+    const byId = new Map(written.map((w) => [w.id, w]));
+    for (const { field } of toWrite) {
+      const w = byId.get(field.id);
+      if (w?.value) {
+        result.push({ ...field, value: w.value, source: "written", confidence: w.method === "llm" ? 0.8 : 0.6, note: w.method === "template" ? "Drafted from your résumé; worth a read" : undefined });
+      } else result.push(ask(field));
+    }
+  }
+
+  if (pending.length && llmEnabled()) {
+    try {
+      const answers = await llmAnswers(c, pending);
+      const byId = new Map(answers.map((a) => [a.id, a]));
+      for (const f of pending) {
+        const a = byId.get(f.id);
+        let value: Value = a?.value?.trim() ? a.value.trim() : null;
+        if (value && f.kind === "checkbox" && f.options?.length) value = value.split("|").map((s) => pickOption(f.options, s.trim()) ?? s.trim());
+        else if (value && f.options?.length) value = pickOption(f.options, value) ?? value;
+        result.push({ ...f, value, source: value ? "ai" : "unanswered", confidence: a?.confidence ?? 0, note: a?.needs_user ? "Needs your input" : undefined });
+      }
+    } catch (e) {
+      console.warn("[answer] llm failed:", (e as Error).message);
+      for (const f of pending) result.push(fallbackAnswer(f));
+    }
+  } else {
+    for (const f of pending) result.push(fallbackAnswer(f));
+  }
+
+  // Keep original field order.
+  const order = new Map(fields.map((f, i) => [f.id, i]));
+  return result.sort((a, b) => (order.get(a.id) ?? 0) - (order.get(b.id) ?? 0));
+}
+
+/** Worth remembering for the next form? Not job-specific prose ("Why Stripe?") or library-covered questions. */
+export function memorable(c: { profile: Profile; job: Job }, f: FilledField): boolean {
+  if (typeof f.value !== "string" || !f.value.trim() || f.kind === "file") return false;
+  if (f.source !== "user") return false;
+  if (matchEntry(withDefaults(c.profile.library), f, c.job)) return false;
+  return !(isOpenEnded(f) && genericQuestion(f.label, c.job.company).includes("company"));
+}
+
+function fallbackAnswer(f: FormField): FilledField {
+  if (f.options?.length) {
+    const decline = pickOption(f.options, "__decline__");
+    if (decline) return { ...f, value: decline, source: "default", confidence: 0.6 };
+  }
+  return { ...f, value: null, source: "unanswered", confidence: 0, note: f.required ? "Needs your input" : undefined };
+}
+
+export const missingRequired = (filled: FilledField[]) => filled.filter((f) => f.required && (f.value == null || (Array.isArray(f.value) ? !f.value.length : !String(f.value).trim())));

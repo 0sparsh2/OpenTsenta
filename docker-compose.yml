@@ -1,0 +1,12 @@
+# Self-host: docker compose up -d  →  http://localhost:8787
+services:
+  ferry:
+    build: .
+    ports: ["8787:8080"]
+    env_file: [.env]
+    environment:
+      PUBLIC_URL: ${PUBLIC_URL:-http://localhost:8787}
+      AUTH_MODE: ${AUTH_MODE:-password}
+    volumes: ["./data:/data"]
+    shm_size: "1gb" # Chromium needs more than Docker's 64 MB default
+    restart: unless-stopped

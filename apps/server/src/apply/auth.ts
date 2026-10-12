@@ -1,0 +1,198 @@
+import type { Frame, Locator, Page } from "playwright";
+import { waitForVerification } from "../mail/index.ts";
+import { accountHost, createAccountRecord, getAccount, markAccount } from "../vault.ts";
+import type { User } from "../store.ts";
+import type { Job } from "../types.ts";
+import { pageText } from "./extract.ts";
+
+// Handles the account wall many ATSes put in front of the application (Workday, iCIMS, Taleo,
+// SuccessFactors, ...): sign in with a stored per-employer account, or create one with the user's
+// email and a generated password, then complete email verification from the user's inbox.
+
+export type AuthState = "none" | "signin" | "signup" | "verify_code" | "verify_link";
+
+export interface AuthContext {
+  user: User;
+  job: Job;
+  think: (text: string, kind?: "thought" | "action" | "error") => void;
+  allowCreate: boolean;
+  /** Called with the vault host once an account is used or created, so the application can show it. */
+  onAccount?: (host: string) => void;
+}
+
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+async function visibleCount(frame: Frame, sel: string) {
+  return frame.locator(`${sel}:visible`).count().catch(() => 0);
+}
+
+/** The frame that holds the auth form (Workday and others sometimes use iframes). */
+async function authFrame(page: Page): Promise<Frame> {
+  for (const f of page.frames()) if ((await visibleCount(f, "input[type=password]")) > 0) return f;
+  return page.mainFrame();
+}
+
+export async function detectAuthState(page: Page): Promise<AuthState> {
+  const frame = await authFrame(page);
+  const pw = await visibleCount(frame, "input[type=password]");
+  const text = (await pageText(page)).toLowerCase();
+  if (pw >= 2) return "signup";
+  if (pw === 1) return /create (an )?account|sign up|register/.test(text.slice(0, 300)) && !/sign in|log in/.test(text.slice(0, 200)) ? "signup" : "signin";
+  const codeInputs = await frame
+    .locator("input:visible")
+    .evaluateAll((els) =>
+      els.filter((e) => {
+        const i = e as HTMLInputElement;
+        const label = `${i.labels?.[0]?.innerText ?? ""} ${i.name} ${i.id} ${i.placeholder} ${i.getAttribute("aria-label") ?? ""} ${i.autocomplete}`.toLowerCase();
+        if (i.type === "hidden" || /postal|zip|area|promo|discount|country|referral|coupon|post code/.test(label)) return false;
+        return /verification|one-time|\botp\b|passcode|security code|confirmation code|sign-?in code|access code|^\s*code\s*$|\bcode\b.*(sent|email)/.test(label) || i.autocomplete === "one-time-code";
+      }).length,
+    )
+    .catch(() => 0);
+  if (codeInputs > 0 && /verif|one-time|we sent|sent (you )?(a|an|the) (code|email)|enter the code/.test(text)) return "verify_code";
+  if (/(check|verify) your (email|inbox)|we('ve| have) sent (you )?(an email|a (verification )?link)|click the link (in|we)|activate your account/.test(text)) return "verify_link";
+  return "none";
+}
+
+async function clickByText(page: Page, re: RegExp, roles = "button, input[type=submit], a, [role=button]"): Promise<boolean> {
+  for (const f of page.frames()) {
+    const cands = f.locator(roles.split(",").map((r) => `${r.trim()}:visible`).join(", "));
+    const n = Math.min(await cands.count().catch(() => 0), 120);
+    for (let i = 0; i < n; i++) {
+      const el = cands.nth(i);
+      const t = ((await el.innerText().catch(() => "")) || (await el.getAttribute("value").catch(() => "")) || (await el.getAttribute("aria-label").catch(() => "")) || "").trim();
+      if (t && t.length < 60 && re.test(t)) {
+        await el.click({ timeout: 5000 });
+        await page.waitForLoadState("networkidle", { timeout: 12000 }).catch(() => {});
+        await sleep(600);
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+async function emailInput(frame: Frame): Promise<Locator | null> {
+  const typed = frame.locator("input[type=email]:visible");
+  if (await typed.count()) return typed.first();
+  const byLabel = frame.getByLabel(/e-?mail|username|user name/i);
+  if (await byLabel.count()) return byLabel.first();
+  const named = frame.locator("input[name*=email i]:visible, input[id*=email i]:visible, input[autocomplete=username]:visible, input[name*=user i]:visible");
+  return (await named.count()) ? named.first() : null;
+}
+
+async function checkConsents(frame: Frame) {
+  const boxes = frame.locator("input[type=checkbox]:visible");
+  const n = await boxes.count();
+  for (let i = 0; i < n; i++) {
+    const b = boxes.nth(i);
+    const label = ((await b.evaluate((e) => (e as HTMLInputElement).labels?.[0]?.innerText ?? e.closest("label")?.textContent ?? "").catch(() => "")) || "").toLowerCase();
+    if (/agree|consent|privacy|terms|accept|acknowledge/.test(label) && !/marketing|newsletter|sms|text message/.test(label)) await b.check({ force: true }).catch(() => {});
+  }
+}
+
+/**
+ * Drive the page through any sign-in / sign-up / verification screens.
+ * Returns "ok" when the application form (or no auth wall) is showing, otherwise a reason.
+ */
+export async function handleAuth(page: Page, ctx: AuthContext): Promise<{ ok: true } | { ok: false; reason: string }> {
+  const host = accountHost(page.url());
+  const email = (ctx.user.profile.personal.email || ctx.user.email).toLowerCase();
+  let since = new Date();
+  let triedSignin = false;
+  let triedSignup = false;
+  let retriedGenerated = false;
+  const senderHints = [ctx.job.company.replace(/\(.*?\)/g, "").trim().split(/\s+/)[0], "workday", "icims", "taleo", "successfactors", "oracle", host.split(".")[0]].filter(Boolean);
+
+  for (let step = 0; step < 8; step++) {
+    const state = await detectAuthState(page);
+    if (state === "none") return { ok: true };
+    const frame = await authFrame(page);
+
+    if (state === "signin") {
+      const acct = getAccount(ctx.user.id, host);
+      if (acct && !triedSignin) {
+        triedSignin = true;
+        ctx.onAccount?.(host);
+        ctx.think(`Signing in to ${host} with your saved employer account`, "action");
+        const e = await emailInput(frame);
+        if (e) await e.fill(acct.email);
+        await frame.locator("input[type=password]:visible").first().fill(acct.password);
+        since = new Date();
+        if (!(await clickByText(page, /^(sign in|log ?in|continue|next|submit)$/i))) await frame.locator("input[type=password]:visible").first().press("Enter");
+        const after = (await pageText(page)).toLowerCase();
+        if (/invalid|incorrect|not recognized|try again/.test(after) && (await detectAuthState(page)) === "signin") {
+          markAccount(ctx.user.id, host, "failed");
+          return { ok: false, reason: `The saved account for ${host} was rejected. Reset its password on the employer site, then retry.` };
+        }
+        if (/verify your email|not verified|verification/.test(after)) {
+          // Account exists but was never verified: fall through to verification handling.
+          ctx.think("The employer still needs the account's email verified");
+        } else markAccount(ctx.user.id, host, "active");
+        continue;
+      }
+      if (!ctx.allowCreate) return { ok: false, reason: `${host} needs a candidate account. Turn on "Create employer accounts for me" in Settings, or create one yourself and retry.` };
+      if (triedSignup) return { ok: false, reason: "Account creation didn't complete on the employer site" };
+      ctx.think("No account with this employer yet; opening Create Account", "action");
+      if (!(await clickByText(page, /create (an )?account|sign up|register|new user|join/i))) return { ok: false, reason: "Couldn't find a Create Account option on the sign-in page" };
+      continue;
+    }
+
+    if (state === "signup") {
+      let acct = getAccount(ctx.user.id, host);
+      if (triedSignup) {
+        const text = await pageText(page);
+        // The site's password policy rejected the user's application password: retry once with a generated one.
+        if (acct?.passwordKind === "application" && !retriedGenerated && /password/i.test(text) && /(must|require|least|invalid|allowed|character)/i.test(text)) {
+          retriedGenerated = true;
+          ctx.think(`${host} didn't accept your application password; using a generated one for this employer`, "action");
+          acct = createAccountRecord(ctx.user.id, host, email, ctx.job.ats, { forceGenerated: true });
+        } else return { ok: false, reason: `Account creation was rejected by ${host}: ${text.match(/(error|must|invalid|already)[^.\n]{0,120}/i)?.[0] ?? "unknown error"}` };
+      }
+      triedSignup = true;
+      acct ??= createAccountRecord(ctx.user.id, host, email, ctx.job.ats);
+      ctx.onAccount?.(host);
+      ctx.think(
+        `Creating your candidate account at ${host} (${acct.email}) with ${acct.passwordKind === "application" ? "your application password" : "a generated password (saved in Settings → Employer accounts)"}`,
+        "action",
+      );
+      const emails = frame.locator("input[type=email]:visible");
+      const ec = await emails.count();
+      if (ec) for (let i = 0; i < ec; i++) await emails.nth(i).fill(acct.email);
+      else (await emailInput(frame))?.fill(acct.email);
+      const pws = frame.locator("input[type=password]:visible");
+      for (let i = 0, n = await pws.count(); i < n; i++) await pws.nth(i).fill(acct.password);
+      for (const [re, v] of [
+        [/first name|given name/i, ctx.user.profile.personal.firstName],
+        [/last name|family name|surname/i, ctx.user.profile.personal.lastName],
+      ] as const) {
+        const f = frame.getByLabel(re);
+        if (v && (await f.count())) await f.first().fill(v).catch(() => {});
+      }
+      await checkConsents(frame);
+      since = new Date();
+      if (!(await clickByText(page, /^(create account|sign up|register|create|continue|submit)$/i))) await pws.last().press("Enter");
+      continue;
+    }
+
+    if (state === "verify_code" || state === "verify_link") {
+      ctx.think("Waiting for the employer's verification email in your inbox", "action");
+      const v = await waitForVerification(ctx.user.id, { since, senderHints, timeoutMs: 120_000, prefer: state === "verify_link" ? "link" : "code" });
+      if (!v) return { ok: false, reason: "The verification email didn't arrive. Connect your inbox (Settings → Email) so Ferry can read verification codes, or verify the account yourself." };
+      if (state === "verify_code" && v.code) {
+        ctx.think(`Entering the verification code from "${v.message.subject}"`, "action");
+        const codeField = frame.locator("input:visible").filter({ hasNot: frame.locator("[type=password]") });
+        const target = (await frame.getByLabel(/code|verification|otp|pin/i).count()) ? frame.getByLabel(/code|verification|otp|pin/i).first() : codeField.first();
+        await target.fill(v.code);
+        if (!(await clickByText(page, /^(verify|submit|continue|confirm|next)$/i))) await target.press("Enter");
+      } else if (v.link) {
+        ctx.think("Opening the verification link from your inbox", "action");
+        await page.goto(v.link, { waitUntil: "domcontentloaded" });
+        await page.waitForLoadState("networkidle", { timeout: 12000 }).catch(() => {});
+      } else return { ok: false, reason: "Got the verification email but couldn't find a code or link in it" };
+      markAccount(ctx.user.id, host, "active");
+      continue;
+    }
+  }
+  return { ok: false, reason: "Got stuck on the employer's sign-in screens" };
+}

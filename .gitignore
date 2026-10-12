@@ -1,0 +1,16 @@
+node_modules
+data/*
+!data/.gitkeep
+dist
+.env
+*.log
+apps/extension/*.zip
+.claude/
+.DS_Store
+# Capacitor copies the built dashboard into the native projects
+apps/mobile/ios/App/App/public
+apps/mobile/android/app/src/main/assets/public
+apps/mobile/ios/App/Pods
+apps/mobile/android/.gradle
+apps/mobile/android/app/build
+*.keystore

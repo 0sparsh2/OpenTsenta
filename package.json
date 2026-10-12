@@ -1,0 +1,26 @@
+{
+  "name": "ferry",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Ferry: an AI agent that finds jobs, tailors your resume, applies, and tracks replies. A working replica of Tsenta's architecture.",
+  "workspaces": [
+    "apps/server",
+    "apps/web",
+    "apps/cli",
+    "apps/mobile"
+  ],
+  "scripts": {
+    "dev": "WEB_URL=http://localhost:5173 npm run dev --workspace apps/server & npm run dev --workspace apps/web",
+    "dev:server": "npm run dev --workspace apps/server",
+    "dev:web": "npm run dev --workspace apps/web",
+    "build": "npm run build --workspace apps/web",
+    "start": "npm run start --workspace apps/server",
+    "test": "npm test --workspace apps/server",
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "test:extension": "npx tsx apps/server/scripts/test-extension.ts",
+    "inspect": "npx tsx apps/server/scripts/inspect-form.ts"
+  },
+  "engines": {
+    "node": ">=22.13"
+  }
+}

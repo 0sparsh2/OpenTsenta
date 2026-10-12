@@ -1,0 +1,29 @@
+Alex Morgan
+San Francisco, CA · alex@morgan.dev · (415) 555-0142 · linkedin.com/in/alex-morgan-dev · github.com/alexmorgan
+
+SUMMARY
+Full-stack engineer with 6 years of experience building web platforms in TypeScript and React, with backend services in Node.js and Go.
+
+EXPERIENCE
+Senior Software Engineer | Brightline Analytics | Jan 2022 - Present
+• Built features for the customer dashboard using React and TypeScript.
+• Led migration of the reporting service from a monolith to Go microservices on Kubernetes, cutting p95 latency 38%.
+• Designed REST and GraphQL APIs consumed by 40+ enterprise customers.
+• Set up CI/CD with GitHub Actions and Terraform-managed AWS infrastructure.
+• Mentored 4 engineers and ran the frontend guild.
+
+Software Engineer | Parcel Labs | Jun 2019 - Dec 2021
+• Worked with the product team on improvements to the shipment tracking app.
+• Implemented real-time tracking updates with WebSockets and Redis, serving 4M monthly active users.
+• Wrote PostgreSQL schema migrations and query optimizations that reduced database load by 25%.
+• Added end-to-end tests with Playwright and raised coverage from 40% to 78%.
+
+Software Engineering Intern | Nimbus Health | May 2018 - Aug 2018
+• Built internal tools in Python and Django for clinical operations.
+
+EDUCATION
+University of California, Davis
+B.S. in Computer Science, 2019, GPA 3.7
+
+SKILLS
+TypeScript, JavaScript, React, Next.js, Node.js, Go, Python, GraphQL, PostgreSQL, Redis, Kafka, Docker, Kubernetes, AWS, Terraform, CI/CD, Playwright, System design

@@ -1,0 +1,167 @@
+// Ferry job detector. On a job posting it shows a small panel (in a shadow root, so page
+// styles can't break it) to add the role to Ferry or queue an application.
+(() => {
+  if (window.top !== window || window.__ferryInjected) return;
+  window.__ferryInjected = true;
+
+  const ATS_PATTERNS = [
+    "greenhouse.io", "gh_jid=", "lever.co", "ashbyhq.com", "myworkdayjobs.com", "myworkdaysite.com", "smartrecruiters.com",
+    ".recruitee.com", "rippling-ats.com", "ats.rippling.com", "icims.com", ".bamboohr.com", "workable.com", ".applytojob.com",
+    "jobvite.com", ".breezy.hr", ".oraclecloud.com", "taleo.net", ".paylocity.com/recruiting", "ultipro.com", ".successfactors.",
+    ".teamtailor.com", ".pinpointhq.com", "app.dover.com/apply", "jobs.gem.com", "dayforcehcm.com", ".zohorecruit.", "workforcenow.adp.com",
+    "/mock-ats/",
+  ];
+  // Pages on job sites that are lists, logins, or profiles rather than a single posting.
+  const NOT_A_POSTING = /\/(search|jobs\/?$|login|signin|sign-in|account|profile|settings|saved)(\/|$|\?)/i;
+
+  function jsonLdPosting() {
+    for (const s of document.querySelectorAll('script[type="application/ld+json"]')) {
+      try {
+        const data = JSON.parse(s.textContent || "");
+        const nodes = (Array.isArray(data) ? data : [data["@graph"] || data]).flat();
+        const p = nodes.find((n) => n && (n["@type"] === "JobPosting" || (Array.isArray(n["@type"]) && n["@type"].includes("JobPosting"))));
+        if (p) return p;
+      } catch {
+        /* malformed JSON-LD */
+      }
+    }
+    return null;
+  }
+
+  const textOf = (html) => {
+    const d = document.createElement("div");
+    d.innerHTML = html || "";
+    return (d.innerText || d.textContent || "").trim();
+  };
+
+  function detect() {
+    const url = location.href;
+    const ld = jsonLdPosting();
+    const atsHit = ATS_PATTERNS.some((p) => url.toLowerCase().includes(p));
+    if (!ld && !atsHit) return null;
+    if (!ld && NOT_A_POSTING.test(location.pathname)) return null;
+    const h1 = document.querySelector("h1")?.innerText?.trim();
+    const title = (ld?.title && textOf(ld.title)) || h1 || document.title.split(/[|\-–]/)[0].trim();
+    if (!title) return null;
+    const org = ld?.hiringOrganization;
+    const company = (typeof org === "string" ? org : org?.name) || document.querySelector('meta[property="og:site_name"]')?.content || "";
+    const loc = ld?.jobLocation ? [].concat(ld.jobLocation).map((l) => [l?.address?.addressLocality, l?.address?.addressRegion].filter(Boolean).join(", ")).filter(Boolean).join(" / ") : "";
+    const description = ld?.description ? textOf(ld.description) : (document.querySelector("main") || document.body).innerText.slice(0, 20000);
+    return { url, title: title.slice(0, 200), company, location: loc, description };
+  }
+
+  function send(type, payload) {
+    return new Promise((resolve) => chrome.runtime.sendMessage({ type, ...payload }, (r) => resolve(r || { error: chrome.runtime.lastError?.message || "No response" })));
+  }
+
+  function mount(job) {
+    const host = document.createElement("div");
+    host.id = "ferry-panel-host";
+    host.style.cssText = "position:fixed;right:18px;bottom:18px;z-index:2147483646;";
+    const root = host.attachShadow({ mode: "open" });
+    root.innerHTML = `
+      <style>
+        :host { all: initial; }
+        [hidden] { display: none !important; }
+        * { box-sizing: border-box; font-family: -apple-system, "Segoe UI", Inter, sans-serif; }
+        .pill { display:flex; align-items:center; gap:8px; background:#0E1B2C; color:#F6F4EF; border:0; border-radius:999px; padding:10px 14px 10px 10px; font-size:13px; font-weight:600; cursor:pointer; box-shadow:0 10px 30px -10px rgba(14,27,44,.5); }
+        .dot { width:22px; height:22px; border-radius:7px; background:#E8572A; display:grid; place-items:center; color:#fff; font-size:13px; }
+        .card { width:320px; background:#fff; color:#0E1B2C; border:1px solid #E6E1D7; border-radius:16px; box-shadow:0 18px 40px -16px rgba(14,27,44,.45); overflow:hidden; }
+        .head { display:flex; align-items:center; justify-content:space-between; padding:12px 14px; background:#0E1B2C; color:#F6F4EF; font-size:13px; font-weight:600; }
+        .x { background:none; border:0; color:#F6F4EF; opacity:.7; font-size:18px; cursor:pointer; line-height:1; }
+        .body { padding:14px; }
+        .t { font-size:15px; font-weight:650; line-height:1.3; }
+        .c { font-size:12.5px; color:#66717F; margin-top:2px; }
+        .row { display:flex; gap:8px; margin-top:12px; }
+        button.b { flex:1; height:34px; border-radius:9px; font-size:13px; font-weight:600; cursor:pointer; border:1px solid #E6E1D7; background:#fff; color:#0E1B2C; }
+        button.p { background:#E8572A; border-color:#E8572A; color:#fff; }
+        button.b:disabled { opacity:.6; cursor:default; }
+        .score { display:flex; align-items:center; gap:10px; margin-top:12px; padding:10px; background:#F6F4EF; border-radius:10px; font-size:12.5px; }
+        .n { font-size:20px; font-weight:700; }
+        ul { margin:6px 0 0; padding-left:16px; font-size:12px; color:#2A3A4F; }
+        .err { margin-top:10px; font-size:12px; color:#C2413B; }
+        .ok { margin-top:10px; font-size:12.5px; color:#1F8A5B; }
+        a { color:#2F6FE4; cursor:pointer; text-decoration:underline; }
+      </style>
+      <button class="pill" part="pill"><span class="dot">⛴</span>Ferry found this job</button>
+      <div class="card" hidden>
+        <div class="head"><span>Ferry</span><button class="x" aria-label="Collapse">×</button></div>
+        <div class="body">
+          <div class="t"></div><div class="c"></div>
+          <div class="row"><button class="b add">Add to Ferry</button><button class="b p apply">Apply with Ferry</button></div>
+          <div class="out"></div>
+        </div>
+      </div>`;
+    const $ = (s) => root.querySelector(s);
+    $(".t").textContent = job.title;
+    $(".c").textContent = [job.company, job.location].filter(Boolean).join(" · ");
+    const pill = $(".pill");
+    const card = $(".card");
+    pill.onclick = () => {
+      pill.hidden = true;
+      card.hidden = false;
+    };
+    $(".x").onclick = () => {
+      card.hidden = true;
+      pill.hidden = false;
+    };
+    const out = $(".out");
+    const show = (r, applied) => {
+      if (r.error) {
+        out.innerHTML = `<div class="err"></div>`;
+        out.firstChild.textContent = r.error;
+        return;
+      }
+      const m = r.job?.match;
+      out.innerHTML = "";
+      if (m) {
+        const s = document.createElement("div");
+        s.className = "score";
+        s.innerHTML = `<span class="n"></span><span><b class="v"></b><ul></ul></span>`;
+        s.querySelector(".n").textContent = `${m.score}%`;
+        s.querySelector(".v").textContent = `${m.verdict} match`;
+        for (const reason of (m.reasons || []).slice(0, 3)) {
+          const li = document.createElement("li");
+          li.textContent = reason;
+          s.querySelector("ul").appendChild(li);
+        }
+        out.appendChild(s);
+      }
+      const ok = document.createElement("div");
+      ok.className = "ok";
+      ok.innerHTML = applied ? `Queued. Ferry will pause before submitting. <a>Open</a>` : `Added to your Ferry jobs. <a>Open</a>`;
+      ok.querySelector("a").onclick = () => send("ferry:open", { path: applied ? `/app/applications/${r.application.id}` : "/app/jobs" });
+      out.appendChild(ok);
+    };
+    $(".add").onclick = async (e) => {
+      e.target.disabled = true;
+      show(await send("ferry:add", { job }), false);
+      e.target.disabled = false;
+    };
+    $(".apply").onclick = async (e) => {
+      e.target.disabled = true;
+      show(await send("ferry:apply", { job }), true);
+    };
+    document.documentElement.appendChild(host);
+  }
+
+  let mountedFor = null;
+  const run = () => {
+    const job = detect();
+    if (!job || mountedFor === job.url) return;
+    document.getElementById("ferry-panel-host")?.remove();
+    mountedFor = job.url;
+    mount(job);
+  };
+  run();
+  // Single-page job boards change the URL without reloading.
+  let href = location.href;
+  setInterval(() => {
+    if (location.href !== href) {
+      href = location.href;
+      mountedFor = null;
+      document.getElementById("ferry-panel-host")?.remove();
+      setTimeout(run, 800);
+    }
+  }, 1000);
+})();

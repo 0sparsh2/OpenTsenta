@@ -1,0 +1,31 @@
+# fly launch --copy-config --no-deploy && fly volumes create ferry_data --size 3 && fly deploy
+# Then set secrets: fly secrets set ANTHROPIC_API_KEY=... RESEND_API_KEY=... STRIPE_SECRET_KEY=... (see .env.example)
+app = "ferry-jobs"
+primary_region = "sjc"
+
+[env]
+  PORT = "8080"
+  DATA_DIR = "/data"
+  AUTH_MODE = "password"
+  HEADLESS = "true"
+
+[[mounts]]
+  source = "ferry_data"
+  destination = "/data"
+
+[http_service]
+  internal_port = 8080
+  force_https = true
+  auto_stop_machines = "off"   # the watcher and apply agent run continuously
+  min_machines_running = 1
+
+  [[http_service.checks]]
+    grace_period = "20s"
+    interval = "30s"
+    method = "GET"
+    path = "/healthz"
+    timeout = "5s"
+
+[[vm]]
+  memory = "2gb"
+  cpus = 2

@@ -1,0 +1,107 @@
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "Instrument Sans", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-serif: "Instrument Serif", ui-serif, Georgia, serif;
+  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+
+  /* Ferry palette: harbor ink, paper, signal orange, sea blue. */
+  --color-ink: #0e1b2c;
+  --color-ink-2: #2a3a4f;
+  --color-muted: #66717f;
+  --color-faint: #98a1ab;
+  --color-paper: #f6f4ef;
+  --color-card: #ffffff;
+  --color-line: #e6e1d7;
+  --color-line-2: #d8d1c3;
+  --color-signal: #e8572a;
+  --color-signal-soft: #fde9e1;
+  --color-sea: #2f6fe4;
+  --color-sea-soft: #e4edfd;
+  --color-kelp: #1f8a5b;
+  --color-kelp-soft: #e1f3ea;
+  --color-amber: #b7791f;
+  --color-amber-soft: #fbf0d9;
+  --color-coral: #c2413b;
+  --color-coral-soft: #fbe5e3;
+
+  --radius-xl: 14px;
+  --radius-2xl: 20px;
+  --shadow-card: 0 1px 0 rgba(14, 27, 44, 0.04), 0 1px 3px rgba(14, 27, 44, 0.06);
+  --shadow-pop: 0 10px 30px -10px rgba(14, 27, 44, 0.25), 0 2px 6px rgba(14, 27, 44, 0.06);
+}
+
+html {
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+body {
+  @apply bg-paper text-ink font-sans;
+  font-feature-settings: "ss01", "cv11";
+}
+::selection {
+  background: var(--color-signal-soft);
+}
+
+.display {
+  font-family: var(--font-serif);
+  font-weight: 400;
+  letter-spacing: -0.01em;
+  line-height: 1.02;
+}
+
+.scroll-thin::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+.scroll-thin::-webkit-scrollbar-thumb {
+  background: var(--color-line-2);
+  border-radius: 99px;
+}
+
+@keyframes pulse-dot {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.35;
+  }
+}
+.pulse-dot {
+  animation: pulse-dot 1.4s ease-in-out infinite;
+}
+
+@keyframes slide-up {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+.slide-up {
+  animation: slide-up 0.35s ease-out both;
+}
+
+@keyframes ticker {
+  from {
+    transform: translateY(0);
+  }
+  to {
+    transform: translateY(-50%);
+  }
+}
+.ticker {
+  animation: ticker 18s linear infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .pulse-dot,
+  .slide-up,
+  .ticker {
+    animation: none;
+  }
+}

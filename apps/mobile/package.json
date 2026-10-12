@@ -1,0 +1,20 @@
+{
+  "name": "@ferry/mobile",
+  "private": true,
+  "description": "Native iOS and Android shells for the Ferry dashboard (Capacitor).",
+  "scripts": {
+    "build:web": "VITE_API_URL=${FERRY_API_URL:?set FERRY_API_URL to your hosted Ferry API} npm run build --workspace apps/web --prefix ../..",
+    "ios": "npm run build:web && npx cap add ios 2>/dev/null; npx cap sync ios && npx cap open ios",
+    "android": "npm run build:web && npx cap add android 2>/dev/null; npx cap sync android && npx cap open android",
+    "sync": "npm run build:web && npx cap sync"
+  },
+  "dependencies": {
+    "@capacitor/core": "8.5.2",
+    "@capacitor/push-notifications": "8.1.3"
+  },
+  "devDependencies": {
+    "@capacitor/cli": "8.5.2",
+    "@capacitor/ios": "8.5.2",
+    "@capacitor/android": "8.5.2"
+  }
+}

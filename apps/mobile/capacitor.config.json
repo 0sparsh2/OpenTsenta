@@ -1,0 +1,10 @@
+{
+  "appId": "app.ferry.jobs",
+  "appName": "Ferry",
+  "webDir": "../web/dist",
+  "backgroundColor": "#F6F4EF",
+  "ios": { "contentInset": "always" },
+  "plugins": {
+    "PushNotifications": { "presentationOptions": ["badge", "sound", "alert"] }
+  }
+}
