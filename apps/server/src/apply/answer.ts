@@ -40,6 +40,7 @@ const COUNTRY_NAMES: Record<string, string> = {
   IE: "Ireland",
 };
 const countryName = (c?: string) => (c ? (COUNTRY_NAMES[c.toUpperCase()] ?? c) : "");
+const DIAL_CODES: Record<string, string> = { US: "+1", CA: "+1", GB: "+44", IN: "+91", DE: "+49", FR: "+33", AU: "+61", SG: "+65", NL: "+31", IE: "+353" };
 
 const withScheme = (u?: string) => (u ? (/^https?:\/\//i.test(u) ? u : `https://${u.replace(/^\/+/, "")}`) : undefined);
 
@@ -225,6 +226,47 @@ function monthOf(ym: string | undefined, f: FormField): Value | undefined {
   return f.options?.length ? (pickOption(f.options, name) ?? pickOption(f.options, m[1]) ?? undefined) : name;
 }
 
+/** "How many years of work experience do you have with TypeScript?": time in roles whose title or bullets name it. */
+const SKILL_YEARS = [/years of (?:[\w-]+ ){0,2}experience (?:do you have )?(?:with|in|using|working (?:with|in)) (.+?)\s*\??\s*\*?$/i, /how many years of (.+?) experience/i];
+const ymTime = (s?: string) => {
+  const m = s?.match(/(\d{4})(?:[-/.](\d{1,2}))?/);
+  return m ? new Date(Number(m[1]), m[2] ? Number(m[2]) - 1 : 0, 1).getTime() : null;
+};
+/** The one technology a years-of-experience question asks about, if any ("TypeScript"; not "software development"). */
+function namedSkill(f: FormField): string | null {
+  const raw = SKILL_YEARS.map((re) => f.label.replace(/\*\s*$/, "").trim().match(re)?.[1]).find(Boolean);
+  const skill = raw?.replace(/\(.*?\)/g, "").replace(/^(the|a|an)\s+/i, "").trim().toLowerCase();
+  if (!skill || /^(professional|relevant|work|industry|related|full time|total|overall)$/.test(skill)) return null;
+  return /software|engineering|development|programming|industry|field|role|position|this|similar|tech|computer|it$/.test(skill) ? null : skill;
+}
+function skillYears(c: AnswerContext, f: FormField): Value | undefined {
+  const skill = namedSkill(f);
+  if (!skill) return undefined;
+  const re = new RegExp(`(^|[^a-z0-9+#])${skill.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}($|[^a-z0-9+#])`, "i");
+  const spans: [number, number][] = [];
+  for (const e of c.doc.experience) {
+    if (e.hidden || !re.test([e.title, e.summary, ...e.bullets].join(" "))) continue;
+    const start = ymTime(e.start);
+    const end = e.current || !e.end || /present|current|now/i.test(e.end) ? Date.now() : ymTime(e.end);
+    if (start && end && end > start) spans.push([start, end]);
+  }
+  if (!spans.length) return undefined; // listed as a skill at most: only you know how long
+  spans.sort((x, y) => x[0] - y[0]);
+  let total = 0;
+  let [s0, e0] = spans[0];
+  for (const [s, e] of spans.slice(1)) {
+    if (s <= e0) e0 = Math.max(e0, e);
+    else {
+      total += e0 - s0;
+      [s0, e0] = [s, e];
+    }
+  }
+  total += e0 - s0;
+  const cap = c.profile.logistics.yearsOfExperience ?? Infinity; // never more than your stated total
+  const years = String(Math.max(1, Math.min(cap, Math.round(total / (365.25 * 864e5)))));
+  return f.options?.length ? (pickOption(f.options, years) ?? undefined) : years;
+}
+
 /** B.S. → "Bachelor's Degree", M.S. → "Master's", Ph.D. → "Doctorate", picked from the form's options. */
 function educationLevel(c: AnswerContext, f: FormField): Value | undefined {
   const degrees = c.doc.education.map((e) => `${e.degree ?? ""} ${e.field ?? ""}`.toLowerCase());
@@ -240,6 +282,22 @@ function educationLevel(c: AnswerContext, f: FormField): Value | undefined {
   if (!level) return undefined;
   if (!f.options?.length) return { doctorate: "Doctorate (PhD)", master: "Master's degree", bachelor: "Bachelor's degree", associate: "Associate degree" }[level];
   return f.options.find((o) => o.toLowerCase().includes(level === "doctorate" ? "doctor" : level) || (level === "doctorate" && /ph\.?d/i.test(o))) ?? undefined;
+}
+
+/** 1 associate … 4 doctorate; the lowest level the text names (so "a bachelor's or master's" asks for a bachelor's). */
+function degreeRank(text: string, lowest = false): number {
+  const d = text.toLowerCase();
+  const hits = [/associate/.test(d) && 1, /\bb\.?s\b|\bb\.?a\b|bachelor|b\.?eng|b\.?tech|\bbsc\b/.test(d) && 2, /\bm\.?s\b|\bm\.?a\b|master|mba|m\.?eng/.test(d) && 3, /ph\.?d|doctor/.test(d) && 4].filter((x): x is number => Boolean(x));
+  return hits.length ? (lowest ? Math.min(...hits) : Math.max(...hits)) : 0;
+}
+/** "Have you completed the following level of education: Bachelor's Degree?": Yes when a finished degree reaches it. */
+function completedLevel(c: AnswerContext, f: FormField): Value | undefined {
+  const asked = degreeRank(f.label, true);
+  const done = c.doc.education.filter((e) => !e.current && !e.hidden);
+  if (!asked || !done.length) return undefined;
+  const have = Math.max(...done.map((e) => degreeRank(`${e.degree ?? ""} ${e.field ?? ""}`)));
+  const v = have >= asked ? "Yes" : "No";
+  return f.options?.length ? (pickOption(f.options, v) ?? undefined) : v;
 }
 
 /** Pick "3.7 out of 4.0"-style options from the résumé's GPA; "Not Applicable" for a graduate GPA without a graduate degree. */
@@ -269,7 +327,20 @@ const RULES: Rule[] = [
   { re: /\blast name\b|family name|surname/, kinds: ["text", "combobox"], maxLen: 50, value: (c) => c.profile.personal.lastName },
   { re: /^(your )?(legal )?(full )?(legal )?name$/, kinds: ["text"], value: (c) => `${c.profile.personal.firstName} ${c.profile.personal.lastName}`.trim() },
   { re: /e-?mail/, kinds: ["text", "email"], maxLen: 50, not: /opt|consent|subscribe|newsletter/, value: (c) => c.profile.personal.email },
-  { re: /phone|mobile( number)?$|telephone|^(primary|contact|cell|daytime|home) (phone )?number$|^cell( phone)?$/, kinds: ["text", "tel", "number"], maxLen: 40, not: /type|opt|consent|sms/, value: (c, f) => (f.kind === "number" ? c.profile.personal.phone?.replace(/\D/g, "") : c.profile.personal.phone) },
+  // "Phone country code" (LinkedIn, SmartRecruiters): the country's entry in a list, or its dialing code.
+  {
+    re: /country (calling |dialing |phone )?code|dialing code|^(phone )?prefix$|^phone country$/,
+    kinds: ["select", "combobox", "listbox", "text", "tel"],
+    maxLen: 40,
+    value: (c, f) => {
+      const cc = c.profile.personal.country?.toUpperCase() ?? "";
+      const dial = DIAL_CODES[cc];
+      if (!cc) return undefined;
+      if (!f.options?.length) return dial;
+      return pickOption(f.options, countryName(cc)) ?? (dial ? f.options.find((o) => o.includes(`(${dial})`) || o.trim() === dial) : undefined);
+    },
+  },
+  { re: /phone|mobile( number)?$|telephone|^(primary|contact|cell|daytime|home) (phone )?number$|^cell( phone)?$/, kinds: ["text", "tel", "number"], maxLen: 40, not: /type|opt|consent|sms|code|prefix/, value: (c, f) => (f.kind === "number" ? c.profile.personal.phone?.replace(/\D/g, "") : c.profile.personal.phone) },
   { re: /linkedin/, kinds: ["text", "url", "textarea"], maxLen: 60, value: (c) => withScheme(c.profile.personal.linkedin) },
   { re: /github/, kinds: ["text", "url", "textarea"], maxLen: 60, value: (c) => withScheme(c.profile.personal.github) },
   { re: /website|portfolio|personal (site|url)|blog/, kinds: ["text", "url"], maxLen: 60, value: (c) => withScheme(c.profile.personal.website || c.profile.personal.github || c.profile.personal.linkedin) },
@@ -316,7 +387,9 @@ const RULES: Rule[] = [
   { re: /\bgpa\b/, maxLen: 40, value: (c) => c.doc.education[0]?.gpa },
   // GPA dropdowns ("3.7 out of 4.0"); graduate GPA with no graduate degree → Not Applicable.
   { re: /\bgpa\b/, kinds: ["select", "combobox", "listbox", "radio"], value: (c, f) => gpaOption(c, f) },
-  { re: /years of (professional |relevant |work |industry |related |full time )?experience/, kinds: ["text", "number", "select", "radio", "combobox"], value: (c) => (c.profile.logistics.yearsOfExperience != null ? String(c.profile.logistics.yearsOfExperience) : undefined) },
+  { re: /years of (?:[\w-]+ ){0,2}experience (?:do you have )?(?:with|in|using|working)|how many years of (?!(professional |relevant |work |industry |related |full time )?experience)/, kinds: ["text", "number", "select", "radio", "combobox"], value: (c, f) => skillYears(c, f) },
+  // Total years, unless the question names one technology Ferry couldn't find in your roles (only you know that).
+  { re: /years of (?:[\w-]+ ){0,3}experience/, kinds: ["text", "number", "select", "radio", "combobox"], value: (c, f) => namedSkill(f) ? undefined : (c.profile.logistics.yearsOfExperience != null ? String(c.profile.logistics.yearsOfExperience) : undefined) },
   // logistics
   { re: /salary|compensation expectation|desired (pay|compensation)|expected (pay|compensation)/, kinds: TEXTY, value: (c) => c.profile.logistics.salaryExpectation },
   { re: /notice period/, kinds: TEXTY, value: (c) => c.profile.logistics.noticePeriod },
@@ -349,6 +422,7 @@ const RULES: Rule[] = [
   { re: /non[- ]?compete|non[- ]?solicit/, kinds: CHOICE, value: () => "No" },
   { re: /(relative|family member|immediate family|related to).{0,60}(employ|work|contractor)|(employ|work).{0,60}(relative|family member)/, kinds: CHOICE, value: () => "No" },
   // Education details from the résumé's most recent school.
+  { re: /(completed|have|hold|earned|obtained|possess|finished)\b.{0,60}\b(associate|bachelor|master|doctorate|ph\.?d)/, kinds: CHOICE, value: (c, f) => completedLevel(c, f) },
   { re: /highest (level of )?(education|degree)|education level|level of education/, kinds: [...CHOICE, "listbox"], not: /parent|guardian|mother|father/, value: (c, f) => educationLevel(c, f) },
   { re: /^(education )?(end|graduation) (date )?year$|^year of graduation$|^graduation year$/, kinds: ["text", "number", "select", "combobox"], value: (c) => c.doc.education[0]?.end?.slice(0, 4) },
   { re: /^(education )?start (date )?year$/, kinds: ["text", "number", "select", "combobox"], value: (c) => c.doc.education[0]?.start?.slice(0, 4) },

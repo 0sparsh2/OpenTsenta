@@ -5,6 +5,7 @@ import { upsertJob } from "../store.ts";
 import { WD_JOBS, workday } from "./workday.ts";
 import { deliverLocal } from "../mail/index.ts";
 import { ENTERPRISE_JOBS, icims, orc, taleo } from "./enterprise.ts";
+import { HANDBACK_JOBS, handbackSubmissions, handbackUrls, linkedin, smartr } from "./handback.ts";
 
 // A sandbox employer ("Acme Robotics") with two application styles, so the full
 // find → tailor → apply → submit → confirm loop can run end to end without touching a real
@@ -72,6 +73,25 @@ Salary $130,000 - $165,000.`,
 ];
 
 export function seedSandboxJobs() {
+  for (const j of HANDBACK_JOBS) {
+    const url = handbackUrls(config.publicUrl, j);
+    upsertJob({
+      companyId: null,
+      company: "Acme Robotics (sandbox)",
+      ats: j.kind === "smartr" ? "smartrecruiters" : "linkedin",
+      externalId: j.kind === "smartr" ? `acme-sr:${j.id}` : `linkedin:${j.id}`,
+      title: j.title,
+      location: j.location,
+      workplace: /remote/i.test(j.location) ? "remote" : /hybrid/i.test(j.location) ? "hybrid" : "onsite",
+      url,
+      applyUrl: url,
+      // Easy Apply postings carry this marker (as resolveLinkedIn stores them).
+      description: j.kind === "linkedin" ? `${j.description}\n\n[LinkedIn Easy Apply]` : j.description,
+      salary: j.description.match(/\$[\d,]+ - \$[\d,]+/)?.[0],
+      postedAt: new Date().toISOString(),
+      sponsorsVisa: null,
+    });
+  }
   for (const j of ENTERPRISE_JOBS) {
     const slug = j.title.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
     const url =
@@ -231,6 +251,8 @@ mockAts.route("/workday", workday);
 mockAts.route("/orc", orc);
 mockAts.route("/icims", icims);
 mockAts.route("/taleo", taleo);
+mockAts.route("/smartr", smartr);
+mockAts.route("/linkedin", linkedin);
 
 mockAts.get("/:style/jobs/:id", (c) => {
   const j = JOBS.find((x) => x.id === c.req.param("id") && x.style === c.req.param("style"));
@@ -295,3 +317,4 @@ mockAts.get("/confirmation/:id", (c) => {
 });
 
 mockAts.get("/submissions", (c) => c.json(submissions));
+mockAts.get("/handback-submissions", (c) => c.json(handbackSubmissions));

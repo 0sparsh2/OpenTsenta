@@ -72,8 +72,11 @@ extension.post("/extension/fill", async (c) => {
   );
   // File inputs: the extension downloads the tailored résumé itself; never send server paths to a page.
   const answers = answered.map((f) => (f.kind === "file" ? { ...f, value: /resume|cv\b|curriculum/i.test(f.label) ? "resume" : null } : f));
+  // Multi-step forms (Easy Apply) arrive one step at a time: keep the earlier steps' answers on the application.
+  const key = (f: { kind: string; label: string }) => `${f.kind}:${f.label.toLowerCase()}`;
+  const now = new Set(answered.map(key));
   app = patchApplication(app.id, {
-    fields: answered,
+    fields: [...(app.fields ?? []).filter((f) => !now.has(key(f))), ...answered],
     status: "NEEDS_INPUT",
     error: "Filled in your browser by the Ferry extension. Review it there and submit, then mark it done here.",
     lastThought: `Filled ${answers.filter((a) => a.value != null && a.value !== "").length} of ${answers.length} fields in your browser`,

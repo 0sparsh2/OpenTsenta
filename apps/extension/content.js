@@ -9,7 +9,7 @@
     ".recruitee.com", "rippling-ats.com", "ats.rippling.com", "icims.com", ".bamboohr.com", "workable.com", ".applytojob.com",
     "jobvite.com", ".breezy.hr", ".oraclecloud.com", "taleo.net", ".paylocity.com/recruiting", "ultipro.com", ".successfactors.",
     ".teamtailor.com", ".pinpointhq.com", "app.dover.com/apply", "jobs.gem.com", "dayforcehcm.com", ".zohorecruit.", "workforcenow.adp.com",
-    "/mock-ats/",
+    "linkedin.com/jobs/view", "currentJobId=", "/mock-ats/",
   ];
   // Pages on job sites that are lists, logins, or profiles rather than a single posting.
   const NOT_A_POSTING = /\/(search|jobs\/?$|login|signin|sign-in|account|profile|settings|saved)(\/|$|\?)/i;
@@ -39,15 +39,20 @@
     const ld = jsonLdPosting();
     const atsHit = ATS_PATTERNS.some((p) => url.toLowerCase().includes(p));
     if (!ld && !atsHit) return null;
-    if (!ld && NOT_A_POSTING.test(location.pathname)) return null;
+    // LinkedIn search results with a job open on the right (…/jobs/search/?currentJobId=…) count as that job.
+    if (!ld && NOT_A_POSTING.test(location.pathname) && !/currentJobId=/.test(url)) return null;
     const h1 = document.querySelector("h1")?.innerText?.trim();
     const title = (ld?.title && textOf(ld.title)) || h1 || document.title.split(/[|\-–]/)[0].trim();
     if (!title) return null;
     const org = ld?.hiringOrganization;
-    const company = (typeof org === "string" ? org : org?.name) || document.querySelector('meta[property="og:site_name"]')?.content || "";
+    const company =
+      (typeof org === "string" ? org : org?.name) ||
+      document.querySelector("[class*='company-name' i]")?.innerText?.trim() ||
+      document.querySelector('meta[property="og:site_name"]')?.content ||
+      "";
     const loc = ld?.jobLocation ? [].concat(ld.jobLocation).map((l) => [l?.address?.addressLocality, l?.address?.addressRegion].filter(Boolean).join(", ")).filter(Boolean).join(" / ") : "";
     const description = ld?.description ? textOf(ld.description) : (document.querySelector("main") || document.body).innerText.slice(0, 20000);
-    return { url, title: title.slice(0, 200), company, location: loc, description };
+    return { url, title: title.slice(0, 200), company, location: loc, description, fromLd: Boolean(ld) };
   }
 
   function send(type, payload) {
@@ -135,33 +140,43 @@
       ok.querySelector("a").onclick = () => send("ferry:open", { path: applied ? `/app/applications/${r.application.id}` : "/app/jobs" });
       out.appendChild(ok);
     };
-    $(".add").onclick = async (e) => {
-      e.target.disabled = true;
+    // Buttons are captured up front: after an await, a click event's target is the panel host, not the button.
+    $(".add").onclick = async () => {
+      const btn = $(".add");
+      btn.disabled = true;
       show(await send("ferry:add", { job }), false);
-      e.target.disabled = false;
+      btn.disabled = false;
     };
-    $(".apply").onclick = async (e) => {
-      e.target.disabled = true;
+    $(".apply").onclick = async () => {
+      $(".apply").disabled = true;
       show(await send("ferry:apply", { job }), true);
     };
 
     // "Fill this form": for application forms in this tab (including sites that block Ferry's own browser).
     let appId = null;
+    let filledSig = null;
     const refreshForm = () => {
-      const isForm = Boolean(window.__ferryFill?.detect());
+      // Once you've filled part of a form here, later steps count even without an email or résumé field.
+      const isForm = Boolean(window.__ferryFill?.detect(Boolean(appId)));
       $(".form").hidden = !isForm;
-      if (isForm) pill.lastChild.textContent = "Ferry can fill this form";
+      const nextStep = isForm && appId && window.__ferryFill.signature() !== filledSig;
+      if (isForm) pill.lastChild.textContent = nextStep ? "Ferry can fill this step" : "Ferry can fill this form";
+      if (nextStep && !$(".fill").disabled) $(".fill").textContent = "Fill this step";
       $(".posting").hidden = isForm && !job.title;
     };
     refreshForm();
     setInterval(refreshForm, 2500);
-    $(".fill").onclick = async (e) => {
-      e.target.disabled = true;
+    $(".fill").onclick = async () => {
+      const btn = $(".fill");
+      btn.disabled = true;
       out.innerHTML = `<div class="c">Reading the form and tailoring your résumé…</div>`;
       const fields = window.__ferryFill.collect();
-      const posting = JSON.parse(sessionStorage.getItem("ferry:lastPosting") || "null");
+      let posting = JSON.parse(sessionStorage.getItem("ferry:lastPosting") || "null");
+      // A posting remembered from earlier in this tab only counts if this form is for the same job.
+      const t = (x) => (x || "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+      if (posting && job.title && posting.url !== job.url && t(posting.title) !== t(job.title)) posting = null;
       const r = await send("ferry:fill", { body: { url: location.href, jobUrl: posting?.url, title: posting?.title || job.title || undefined, company: posting?.company || job.company || undefined, fields } });
-      e.target.disabled = false;
+      btn.disabled = false;
       if (r.error) {
         out.innerHTML = `<div class="err"></div>`;
         out.firstChild.textContent = r.error;
@@ -173,15 +188,18 @@
         if (pdf.base64) file = new File([Uint8Array.from(atob(pdf.base64), (ch) => ch.charCodeAt(0))], pdf.name || "Resume.pdf", { type: "application/pdf" });
       }
       const res = await window.__ferryFill.apply(fields, r.answers, file);
-      e.target.textContent = "Fill again";
+      btn.textContent = "Fill again";
       appId = r.applicationId;
+      filledSig = window.__ferryFill.signature();
       out.innerHTML = `<div class="ok"></div>`;
-      out.firstChild.textContent = `Filled ${res.filled} of ${res.total} fields with your tailored answers.${res.left.length ? ` Still needs you: ${res.left.slice(0, 4).join("; ")}${res.left.length > 4 ? "…" : ""}.` : ""} Review everything, then submit it yourself.`;
+      const kept = res.kept ? ` ${res.kept} already filled in.` : "";
+      const left = res.left.length ? ` Still needs you: ${res.left.slice(0, 4).join("; ")}${res.left.length > 4 ? "…" : ""}.` : "";
+      out.firstChild.textContent = `Filled ${res.filled} of ${res.total} fields with your tailored answers.${kept}${left} Review everything, then continue or submit it yourself.`;
       $(".done").hidden = false;
     };
-    $(".submitted").onclick = async (e) => {
+    $(".submitted").onclick = async () => {
       if (!appId) return;
-      e.target.disabled = true;
+      $(".submitted").disabled = true;
       const r = await send("ferry:submitted", { applicationId: appId });
       out.innerHTML = `<div class="${r.error ? "err" : "ok"}"></div>`;
       out.firstChild.textContent = r.error || "Marked as applied in Ferry. It's on your tracker now.";
@@ -192,8 +210,10 @@
   let mountedFor = null;
   const run = () => {
     let job = detect();
-    // Remember the posting so a later application page in this tab knows which job it belongs to.
-    if (job) sessionStorage.setItem("ferry:lastPosting", JSON.stringify({ url: job.url, title: job.title, company: job.company }));
+    // Remember the posting so a later application page in this tab knows which job it belongs to. A separate apply
+    // page (SmartRecruiters' one-click form, say) isn't the posting, so it doesn't replace it.
+    const applyPage = job && !job.fromLd && window.__ferryFill?.detect() && sessionStorage.getItem("ferry:lastPosting");
+    if (job && !applyPage) sessionStorage.setItem("ferry:lastPosting", JSON.stringify({ url: job.url, title: job.title, company: job.company }));
     // No posting, but an application form (a separate apply page, a modal): offer to fill it.
     if (!job && window.__ferryFill?.detect()) job = { url: location.href, title: "", company: "", location: "", description: "" };
     if (!job || mountedFor === job.url) return;

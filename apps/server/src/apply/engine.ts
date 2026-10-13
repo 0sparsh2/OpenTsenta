@@ -193,7 +193,7 @@ async function openForm(run: Run, page: BrowserPage, target: string): Promise<{ 
     const easy = /\[LinkedIn Easy Apply\]/.test(job.description);
     return {
       blocked: easy
-        ? "This is a LinkedIn Easy Apply job, which only works inside LinkedIn with your account. Your tailored résumé is ready to download: apply on LinkedIn, then mark it done here."
+        ? "This is a LinkedIn Easy Apply job, which only works inside LinkedIn with your account. Your tailored résumé is ready: open it on LinkedIn, click Easy Apply, and use \"Fill this form\" in the Ferry extension on each step. Then mark it done here."
         : `LinkedIn only shows ${job.company}'s application link to signed-in members, and Ferry doesn't use your LinkedIn login. Click Apply on LinkedIn, then paste the company's application page into Ferry and it takes over from there.`,
     };
   }

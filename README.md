@@ -83,9 +83,9 @@ end against local sandboxes that mirror them.
 | Oracle Recruiting | Public REST API, 34 boards | Email + terms, emailed one-time code in split boxes, multi-step forms (sandbox) |
 | SuccessFactors | Career-site search, 14 boards | Sign-in and the talent-community email step are recognized. Tenants with a captcha on sign-in are handed back. |
 | Taleo | Public REST search, 4 boards | Apply Online, New User registration, privacy agreement, five-step flow with eSignature and review (sandbox) |
-| SmartRecruiters | Public API | Forms sit behind DataDome bot protection. Handed back with your documents ready; the extension fills the form in your own browser. |
+| SmartRecruiters | Public API | Forms sit behind DataDome bot protection, so Ferry hands them back. The extension fills the one-click form in your own browser: web components, city autocomplete, dropdowns, résumé (sandbox). |
 | Workable | Public API | One-page forms |
-| LinkedIn | Paste a job link | Matched to the same role on the company's own ATS when Ferry watches it. Otherwise handed back, and the extension can fill the form in your own browser. Ferry never uses your LinkedIn login. |
+| LinkedIn | Paste a job link | Matched to the same role on the company's own ATS when Ferry watches it. Easy Apply jobs are handed back; the extension fills each step of the Easy Apply modal in your own browser (sandbox). Ferry never uses your LinkedIn login. |
 | Anything else | Paste a job link (JSON-LD or microdata) | Generic form agent, plus the Claude navigator when a key is set |
 
 Ferry never solves captchas or bot checks. Those applications land in "Finish it yourself" with the posting, your
@@ -159,20 +159,20 @@ Or use `npx ferry token <api-token>`. Then run `ferry matches`, `ferry apply <jo
 ## Tests and tools
 
 ```bash
-npm test                                                  # 35 end-to-end + integration tests, no network or keys needed
+npm test                                                  # 38 end-to-end + integration tests, no network or keys needed
 npx tsx apps/server/scripts/inspect-form.ts <job-url>     # read-only: the fields the agent would see on a real form
 npx tsx apps/server/scripts/inspect-workday.ts <url>      # read-only: walk a real Workday posting to its sign-in step
 npx tsx apps/server/scripts/inspect-apply.ts <url>        # read-only: follow Apply on any posting to its form or sign-in wall
 npx tsx apps/server/scripts/coverage.ts --ats ashby --per 6   # dry-run sweep of real postings, report per ATS
 npx tsx apps/server/scripts/discover-boards.ts            # re-verify and grow the watched board list
 npx tsx apps/server/scripts/test-extension.ts             # loads the Chrome extension in Chromium and drives the panel
-npx tsx apps/server/scripts/test-extension-fill.ts        # extension fills a sandbox form in-page; checks nothing is submitted
 ```
 
 The suite covers:
 
 - the full apply loop on six sandbox employers: a one-page form, a wizard, Workday (account creation with your application password, emailed code), Oracle Recruiting (email + one-time code in split boxes), iCIMS (iframe posting, email-first sign-in, account creation), and Taleo (New User registration, privacy agreement, eSignature, review);
 - account walls never crossed when account creation is off or in a dry run;
+- the Chrome extension's "Fill this form", loaded into Chromium: a plain form, a SmartRecruiters-style web-component form behind a bot wall, and a four-step LinkedIn-style Easy Apply modal (it never submits; the test submits as the person would);
 - résumé profiles, templates, the page limit (verified against the real PDF page count), Word export, and "keep my design";
 - the answer library: fixed answers, per-job written answers, and the auto-write switch;
 - prompt-to-modify edits and the preview-before-applying pause;
