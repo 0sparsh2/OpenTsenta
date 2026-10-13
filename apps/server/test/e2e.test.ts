@@ -319,3 +319,25 @@ test("security code after Submit (Greenhouse-style): read from the inbox, entere
   const sub = (await (await fetch(`http://localhost:${PORT}/mock-ats/submissions`)).json()).at(-1);
   assert.equal(sub.job, "secure:1002");
 });
+
+test("Taleo-style: Apply Online, New User registration, privacy agreement, five steps, review, submitted", async () => {
+  const { enterpriseSubmissions } = await import("../src/mock/enterprise.ts");
+  const job = (await call("GET", "/jobs/search?q=Embedded&limit=5")).items.find((j: any) => j.title === "Embedded Software Engineer");
+  assert.ok(job, "sandbox Taleo-style job seeded");
+  const created = await call("POST", "/applications", { jobId: job.id });
+  let a = await waitFor(created.id, ["NEEDS_INPUT", "PENDING_SUBMIT_REVIEW", "FAILED"], 180000);
+  const trace = () => a.trace.map((t: any) => t.text).join(" | ");
+  assert.equal(a.status, "PENDING_SUBMIT_REVIEW", `${a.status}: ${a.error} :: ${trace().slice(-700)}`);
+  assert.match(trace(), /Creating your candidate account/);
+  assert.match(trace(), /privacy agreement/);
+  await call("POST", `/applications/${a.id}/approve`, {});
+  a = await waitFor(a.id, ["COMPLETED", "FAILED", "NEEDS_INPUT"], 180000);
+  assert.equal(a.status, "COMPLETED", `${a.error} :: ${trace().slice(-700)}`);
+  const sub = enterpriseSubmissions.filter((s) => s.kind === "taleo").at(-1)!;
+  assert.equal(sub.email, "test@ferry.local");
+  assert.equal(sub.data.state, "California");
+  assert.equal(sub.data.previous, "No");
+  assert.equal(sub.data.adult, "Yes");
+  assert.equal(sub.data.signature, "Alex Morgan");
+  assert.ok(sub.files.resume > 1000);
+});

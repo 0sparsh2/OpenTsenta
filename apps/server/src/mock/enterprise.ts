@@ -10,7 +10,7 @@ import { deliverLocal } from "../mail/index.ts";
 //                   password → one-page profile form.
 // Nothing leaves the machine; codes go to the local sandbox mailbox.
 
-export const ENTERPRISE_JOBS = [
+export const ENTERPRISE_JOBS: { kind: "orc" | "icims" | "taleo"; id: string; title: string; location: string; description: string }[] = [
   {
     kind: "orc" as const,
     id: "5001",
@@ -37,9 +37,22 @@ Salary $150,000 - $185,000.`,
 
 Salary $160,000 - $200,000.`,
   },
+  {
+    kind: "taleo" as const,
+    id: "8001",
+    title: "Embedded Software Engineer",
+    location: "Boston, MA (On-site)",
+    description: `Write the firmware that keeps Acme's robots moving safely.
+
+• C/C++, RTOS, embedded Linux
+• Motor control and sensor fusion
+• 3+ years of embedded experience
+
+Salary $140,000 - $175,000.`,
+  },
 ];
 
-export const enterpriseSubmissions: { kind: "orc" | "icims"; jobId: string; email: string; data: Record<string, string>; files: Record<string, number>; at: string }[] = [];
+export const enterpriseSubmissions: { kind: "orc" | "icims" | "taleo"; jobId: string; email: string; data: Record<string, string>; files: Record<string, number>; at: string }[] = [];
 
 const shell = (brand: string, title: string, body: string, color = "#7b3fa0") => `<!doctype html><html><head><meta charset="utf-8"><title>${title}</title>
 <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -55,7 +68,7 @@ input[type=text],input[type=email],input[type=password],input[type=tel],select,t
 .badge{display:inline-block;background:#fff4d6;color:#7a5a00;border-radius:99px;padding:2px 10px;font-size:12px;margin-bottom:12px}
 </style></head><body><header>Acme Robotics · ${brand}</header><main><div class="badge">Sandbox ${brand} · nothing leaves your machine</div>${body}</main></body></html>`;
 const esc = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/"/g, "&quot;");
-const job = (kind: "orc" | "icims", id: string) => ENTERPRISE_JOBS.find((j) => j.kind === kind && j.id === id);
+const job = (kind: "orc" | "icims" | "taleo", id: string) => ENTERPRISE_JOBS.find((j) => j.kind === kind && j.id === id);
 const sid = () => crypto.randomBytes(12).toString("hex");
 
 // ---------- Oracle Recruiting-style ----------
@@ -268,8 +281,141 @@ icims.post("/jobs/:id/:slug/candidate", async (c) => {
   return c.html(shell("iCIMS", "Thank you", `<h1>Thank you!</h1><p>Your application was submitted.</p>`, "#2b6cb0"));
 });
 
+// ---------- Taleo-style ----------
+// Legacy careersection flow: "Apply Online" → login or "New User" registration (user name + password + email) →
+// privacy agreement (Accept) → personal information → attachments → questionnaire → eSignature → review → Submit.
+
+const taleoAccounts = new Map<string, { password: string; email: string }>();
+const taleoSessions = new Map<string, { user: string; data: Record<string, string>; files: Record<string, number> }>();
+export const taleo = new Hono();
+const taleoSession = (c: Context) => taleoSessions.get(getCookie(c, "taleo_session") ?? "");
+const T = "/mock-ats/taleo/careersection/ext";
+const tshell = (title: string, body: string) => shell("Taleo", title, body, "#1f5d36");
+
+taleo.get("/careersection/ext/jobdetail.ftl", (c) => {
+  const j = job("taleo", c.req.query("job") ?? "");
+  if (!j) return c.text("Not found", 404);
+  return c.html(tshell(`Job Description - ${j.title}`, `<p class="muted">Welcome. You are not signed in.</p><h1>${esc(j.title)}</h1><p>${esc(j.location)}</p><pre>${esc(j.description)}</pre>
+<input type="button" class="btn" value="Apply Online" onclick="location.href='${T}/jobapply.ftl?job=${j.id}'">`));
+});
+
+taleo.get("/careersection/ext/jobapply.ftl", (c) => {
+  const id = c.req.query("job") ?? "";
+  if (taleoSession(c)) return c.redirect(`${T}/flow.ftl?job=${id}&step=1`);
+  return c.html(
+    tshell(
+      "Login",
+      `<h1>Login</h1><p>Returning user? Sign in. New users: create an account.</p>
+<form method="post" action="${T}/login.ftl?job=${id}"><div class="field"><label for="u">User Name</label><input type="text" id="u" name="user"></div>
+<div class="field"><label for="p">Password</label><input type="password" id="p" name="password"></div><button type="submit">Login</button></form>
+<p><a class="btn" href="${T}/register.ftl?job=${id}">New User</a></p>`,
+    ),
+  );
+});
+
+taleo.post("/careersection/ext/login.ftl", async (c) => {
+  const b = await c.req.parseBody();
+  const a = taleoAccounts.get(String(b.user ?? "").toLowerCase());
+  if (!a || a.password !== b.password) return c.html(tshell("Login", `<div class="err">The user name or password is incorrect.</div>`), 401);
+  const s = sid();
+  taleoSessions.set(s, { user: String(b.user).toLowerCase(), data: {}, files: {} });
+  setCookie(c, "taleo_session", s, { path: "/mock-ats/taleo", httpOnly: true, sameSite: "Lax" });
+  return c.redirect(`${T}/flow.ftl?job=${c.req.query("job")}&step=1`);
+});
+
+taleo.get("/careersection/ext/register.ftl", (c) =>
+  c.html(
+    tshell(
+      "New User Registration",
+      `<h1>New User Registration</h1><p>Create an account to apply. All fields are required.</p>
+<form method="post"><div class="field"><label for="ru">User Name</label><input type="text" id="ru" name="user" required></div>
+<div class="field"><label for="rp">Password</label><input type="password" id="rp" name="password" required></div>
+<div class="field"><label for="rp2">Re-enter Password</label><input type="password" id="rp2" name="password2" required></div>
+<div class="field"><label for="re">Email Address</label><input type="text" id="re" name="email" required></div>
+<div class="field"><label class="opt"><input type="checkbox" name="privacy" value="yes"> I have read and accept the privacy agreement</label></div>
+<button type="submit">Register</button></form>`,
+    ),
+  ),
+);
+
+taleo.post("/careersection/ext/register.ftl", async (c) => {
+  const b = await c.req.parseBody();
+  const user = String(b.user ?? "").toLowerCase();
+  if (!user || !b.email || b.password !== b.password2 || String(b.password).length < 8 || b.privacy !== "yes")
+    return c.html(tshell("New User Registration", `<div class="err">Please complete all fields, match the passwords, and accept the privacy agreement.</div>`), 400);
+  if (taleoAccounts.has(user)) return c.html(tshell("New User Registration", `<div class="err">This user name is already taken.</div>`), 400);
+  taleoAccounts.set(user, { password: String(b.password), email: String(b.email).toLowerCase() });
+  const s = sid();
+  taleoSessions.set(s, { user, data: {}, files: {} });
+  setCookie(c, "taleo_session", s, { path: "/mock-ats/taleo", httpOnly: true, sameSite: "Lax" });
+  return c.redirect(`${T}/flow.ftl?job=${c.req.query("job")}&step=1`);
+});
+
+const TALEO_STEPS = ["Privacy Agreement", "Personal Information", "Attachments", "Questionnaire", "eSignature", "Review and Submit"];
+
+taleo.get("/careersection/ext/flow.ftl", (c) => {
+  const s = taleoSession(c);
+  const id = c.req.query("job") ?? "";
+  if (!s) return c.redirect(`${T}/jobapply.ftl?job=${id}`);
+  const step = Number(c.req.query("step") ?? 1);
+  const head = `<p class="muted">Step ${step} of ${TALEO_STEPS.length}: ${TALEO_STEPS[step - 1]}</p>`;
+  const action = `${T}/flow.ftl?job=${id}&step=${step}`;
+  const bodies: Record<number, string> = {
+    1: `<h1>Privacy Agreement</h1><p>Acme Robotics will process your personal data to evaluate your application. Read the agreement and accept to continue.</p>
+<form method="post" action="${action}"><input type="submit" class="btn" name="decision" value="Accept"> <input type="submit" name="decision" value="Decline"></form>`,
+    2: `<h1>Personal Information</h1><form method="post" action="${action}">
+<div class="field"><label for="fn">First Name</label><input type="text" id="fn" name="first" required></div>
+<div class="field"><label for="ln">Last Name</label><input type="text" id="ln" name="last" required></div>
+<div class="field"><label for="ph">Primary Number</label><input type="text" id="ph" name="phone" required></div>
+<div class="field"><label for="ad">Address (line 1)</label><input type="text" id="ad" name="address" required></div>
+<div class="field"><label for="ci">City</label><input type="text" id="ci" name="city" required></div>
+<div class="field"><label for="st">State/Province</label><select id="st" name="state" required><option value="">Select</option><option>California</option><option>Massachusetts</option><option>New York</option><option>Texas</option></select></div>
+<div class="field"><label for="zp">Zip/Postal Code</label><input type="text" id="zp" name="zip" required></div>
+<input type="submit" class="btn" value="Save and Continue"></form>`,
+    3: `<h1>Attachments</h1><form method="post" action="${action}" enctype="multipart/form-data">
+<div class="field"><label for="cv">Attach a resume</label><input type="file" id="cv" name="resume" required></div>
+<input type="submit" class="btn" value="Save and Continue"></form>`,
+    4: `<h1>Questionnaire</h1><form method="post" action="${action}">
+<div class="field"><span class="q">Are you at least 18 years of age?</span><label class="opt"><input type="radio" name="adult" value="Yes" required> Yes</label><label class="opt"><input type="radio" name="adult" value="No"> No</label></div>
+<div class="field"><label for="pw">Have you ever worked for Acme Robotics?</label><select id="pw" name="previous" required><option value="">Select</option><option>Yes</option><option>No</option></select></div>
+<input type="submit" class="btn" value="Save and Continue"></form>`,
+    5: `<h1>eSignature</h1><p>By typing your full name you certify the information is accurate.</p><form method="post" action="${action}">
+<div class="field"><label for="sg">Type your full legal name</label><input type="text" id="sg" name="signature" required></div>
+<input type="submit" class="btn" value="Save and Continue"></form>`,
+    6: `<h1>Review and Submit</h1><pre>${esc(JSON.stringify(s.data, null, 2))}</pre><form method="post" action="${action}"><input type="submit" class="btn" value="Submit"></form>`,
+  };
+  return c.html(tshell(TALEO_STEPS[step - 1] ?? "Done", head + (bodies[step] ?? "")));
+});
+
+taleo.post("/careersection/ext/flow.ftl", async (c) => {
+  const s = taleoSession(c);
+  const id = c.req.query("job") ?? "";
+  if (!s) return c.redirect(`${T}/jobapply.ftl?job=${id}`);
+  const step = Number(c.req.query("step") ?? 1);
+  const b = await c.req.parseBody();
+  const next = () => c.redirect(`${T}/flow.ftl?job=${id}&step=${step + 1}`);
+  const err = (m: string) => c.html(tshell(TALEO_STEPS[step - 1], `<div class="err">${m}</div>`), 400);
+  if (step === 1) return b.decision === "Accept" ? next() : err("You must accept the privacy agreement to apply.");
+  if (step === 3) {
+    const f = b.resume;
+    if (!(f instanceof File) || !f.size) return err("Attach a resume.");
+    s.files.resume = f.size;
+    return next();
+  }
+  if (step === 6) {
+    enterpriseSubmissions.push({ kind: "taleo", jobId: id, email: taleoAccounts.get(s.user)?.email ?? "", data: s.data, files: s.files, at: new Date().toISOString() });
+    return c.html(tshell("Thank you", `<h1>Thank you for applying</h1><p>Your submission has been received.</p>`));
+  }
+  for (const [k, v] of Object.entries(b)) if (typeof v === "string") s.data[k] = v;
+  const required: Record<number, string[]> = { 2: ["first", "last", "phone", "address", "city", "state", "zip"], 4: ["adult", "previous"], 5: ["signature"] };
+  if ((required[step] ?? []).some((k) => !s.data[k])) return err("Please complete all required fields.");
+  return next();
+});
+
 /** For tests: forget sandbox accounts and sessions. */
 export function resetEnterpriseSandboxes() {
+  taleoAccounts.clear();
+  taleoSessions.clear();
   icimsAccounts.clear();
   icimsSessions.clear();
   orcSessions.clear();

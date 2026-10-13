@@ -269,7 +269,7 @@ const RULES: Rule[] = [
   { re: /\blast name\b|family name|surname/, kinds: ["text", "combobox"], maxLen: 50, value: (c) => c.profile.personal.lastName },
   { re: /^(your )?(legal )?(full )?(legal )?name$/, kinds: ["text"], value: (c) => `${c.profile.personal.firstName} ${c.profile.personal.lastName}`.trim() },
   { re: /e-?mail/, kinds: ["text", "email"], maxLen: 50, not: /opt|consent|subscribe|newsletter/, value: (c) => c.profile.personal.email },
-  { re: /phone|mobile( number)?$|telephone/, kinds: ["text", "tel", "number"], maxLen: 40, not: /type|opt|consent|sms/, value: (c, f) => (f.kind === "number" ? c.profile.personal.phone?.replace(/\D/g, "") : c.profile.personal.phone) },
+  { re: /phone|mobile( number)?$|telephone|^(primary|contact|cell|daytime|home) (phone )?number$|^cell( phone)?$/, kinds: ["text", "tel", "number"], maxLen: 40, not: /type|opt|consent|sms/, value: (c, f) => (f.kind === "number" ? c.profile.personal.phone?.replace(/\D/g, "") : c.profile.personal.phone) },
   { re: /linkedin/, kinds: ["text", "url", "textarea"], maxLen: 60, value: (c) => withScheme(c.profile.personal.linkedin) },
   { re: /github/, kinds: ["text", "url", "textarea"], maxLen: 60, value: (c) => withScheme(c.profile.personal.github) },
   { re: /website|portfolio|personal (site|url)|blog/, kinds: ["text", "url"], maxLen: 60, value: (c) => withScheme(c.profile.personal.website || c.profile.personal.github || c.profile.personal.linkedin) },

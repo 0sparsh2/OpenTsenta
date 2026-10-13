@@ -27,7 +27,7 @@ import type { FilledField, PipelineStatus, TraceStep } from "../types.ts";
 import { answerFields, memorable, missingRequired } from "./answer.ts";
 import { detectAuthState, handleAuth, submitTimeCode } from "./auth.ts";
 import { extractFields, pageText, type FrameField } from "./extract.ts";
-import { botWall, CONFIRMATION_RE, dismissCookieBanner, fillField, findApplyEntry, findApplyManual, findNext, findSubmit, hasCaptcha, probeComboboxOptions, verifyAndRepair, visibleErrors } from "./fill.ts";
+import { botWall, CONFIRMATION_RE, dismissCookieBanner, findAgreement, fillField, findApplyEntry, findApplyManual, findNext, findSubmit, hasCaptcha, probeComboboxOptions, verifyAndRepair, visibleErrors } from "./fill.ts";
 import { navigate } from "./navigator.ts";
 
 const MAX_PAGES = 8;
@@ -217,6 +217,17 @@ async function openForm(run: Run, page: BrowserPage, target: string): Promise<{ 
   let blocked = await auth();
   if (blocked) return { blocked };
   let fields = await extractFields(page);
+  // In-flow agreement steps (Taleo's privacy agreement) come before the form: accept and move on.
+  const agreement = async () => {
+    for (let i = 0; i < 2 && !usable(fields); i++) {
+      const agree = await findAgreement(page);
+      if (!agree) return;
+      run.think("Accepting the employer's privacy agreement to reach the form", "action");
+      await agree.click();
+      await settle();
+      fields = await extractFields(page);
+    }
+  };
   if (!usable(fields)) {
     // Single-page career sites render the Apply button after the rest of the page (and after cookie banners).
     let entry = await findApplyEntry(page);
@@ -262,6 +273,7 @@ async function openForm(run: Run, page: BrowserPage, target: string): Promise<{ 
       blocked = await auth();
       if (blocked) return { blocked };
       fields = await extractFields(page);
+      await agreement();
     }
   }
   if (!usable(fields)) {

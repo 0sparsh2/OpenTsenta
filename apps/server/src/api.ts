@@ -15,6 +15,7 @@ import { llmEnabled } from "./llm.ts";
 import { matchJobsForUser, rematchUser, saveMatch } from "./match/score.ts";
 import { cancel, enqueue, queueStatus } from "./apply/queue.ts";
 import { resumes } from "./routes/resumes.ts";
+import { extension } from "./routes/extension.ts";
 import { pickProfile } from "./resume/profiles.ts";
 import {
   createApplication,
@@ -269,6 +270,7 @@ api.patch("/settings", async (c) => c.json(updateSettings(c.get("user").id, awai
 
 // Résumé profiles, previews, tailored résumés and the answer library live in routes/resumes.ts.
 api.route("/", resumes);
+api.route("/", extension);
 
 api.post("/onboarding/complete", (c) => {
   const u = c.get("user");

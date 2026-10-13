@@ -1,15 +1,48 @@
 {
   "manifest_version": 3,
   "name": "Ferry — job application agent",
-  "version": "0.1.0",
-  "description": "Detects job postings on any site and sends them to your Ferry agent to tailor, apply, and track.",
-  "icons": { "16": "icons/16.png", "48": "icons/48.png", "128": "icons/128.png" },
-  "action": { "default_title": "Ferry", "default_popup": "popup.html" },
-  "background": { "service_worker": "background.js" },
-  "permissions": ["storage"],
-  "host_permissions": ["http://localhost/*", "http://127.0.0.1/*"],
+  "version": "0.2.0",
+  "description": "Finds job postings on any site and sends them to your Ferry agent; fills application forms in your own browser when a site blocks automation.",
+  "icons": {
+    "16": "icons/16.png",
+    "48": "icons/48.png",
+    "128": "icons/128.png"
+  },
+  "action": {
+    "default_title": "Ferry",
+    "default_popup": "popup.html"
+  },
+  "background": {
+    "service_worker": "background.js"
+  },
+  "permissions": [
+    "storage"
+  ],
+  "host_permissions": [
+    "http://localhost/*",
+    "http://127.0.0.1/*"
+  ],
   "content_scripts": [
-    { "matches": ["<all_urls>"], "run_at": "document_idle", "all_frames": false, "js": ["content.js"] },
-    { "matches": ["http://localhost/*", "http://127.0.0.1/*"], "run_at": "document_idle", "js": ["bridge.js"] }
+    {
+      "matches": [
+        "<all_urls>"
+      ],
+      "run_at": "document_idle",
+      "all_frames": false,
+      "js": [
+        "fill.js",
+        "content.js"
+      ]
+    },
+    {
+      "matches": [
+        "http://localhost/*",
+        "http://127.0.0.1/*"
+      ],
+      "run_at": "document_idle",
+      "js": [
+        "bridge.js"
+      ]
+    }
   ]
 }

@@ -216,6 +216,15 @@ export const findNext = (page: Page) => findButton(page, NEXT_RE);
 export const findApplyEntry = (page: Page) => findButton(page, APPLY_ENTRY_RE);
 export const findApplyManual = (page: Page) => findButton(page, APPLY_MANUAL_RE);
 
+const AGREE_RE = /^(i )?(accept|agree)( (and|&) continue| to (the )?terms)?$/i;
+/** An in-flow agreement step (Taleo's privacy agreement): a page whose only action is Accept. */
+export async function findAgreement(page: Page): Promise<Locator | null> {
+  const btn = await findButton(page, AGREE_RE);
+  if (!btn) return null;
+  const text = (await page.locator("body").innerText({ timeout: 2000 }).catch(() => "")).toLowerCase();
+  return /privacy|agreement|terms|consent|personal data/.test(text) ? btn : null;
+}
+
 const CAPTCHA_RE = /recaptcha|hcaptcha|turnstile|challenges\.cloudflare|captcha/i;
 
 /**

@@ -4,7 +4,7 @@ import { config } from "../config.ts";
 import { upsertJob } from "../store.ts";
 import { WD_JOBS, workday } from "./workday.ts";
 import { deliverLocal } from "../mail/index.ts";
-import { ENTERPRISE_JOBS, icims, orc } from "./enterprise.ts";
+import { ENTERPRISE_JOBS, icims, orc, taleo } from "./enterprise.ts";
 
 // A sandbox employer ("Acme Robotics") with two application styles, so the full
 // find → tailor → apply → submit → confirm loop can run end to end without touching a real
@@ -74,11 +74,16 @@ Salary $130,000 - $165,000.`,
 export function seedSandboxJobs() {
   for (const j of ENTERPRISE_JOBS) {
     const slug = j.title.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
-    const url = j.kind === "orc" ? `${config.publicUrl}/mock-ats/orc/acme/job/${j.id}` : `${config.publicUrl}/mock-ats/icims/jobs/${j.id}/${slug}/job`;
+    const url =
+      j.kind === "orc"
+        ? `${config.publicUrl}/mock-ats/orc/acme/job/${j.id}`
+        : j.kind === "taleo"
+          ? `${config.publicUrl}/mock-ats/taleo/careersection/ext/jobdetail.ftl?job=${j.id}`
+          : `${config.publicUrl}/mock-ats/icims/jobs/${j.id}/${slug}/job`;
     upsertJob({
       companyId: null,
       company: "Acme Robotics (sandbox)",
-      ats: j.kind === "orc" ? "oraclecloud" : "icims",
+      ats: j.kind === "orc" ? "oraclecloud" : j.kind,
       externalId: `acme-${j.kind}:${j.id}`,
       title: j.title,
       location: j.location,
@@ -225,6 +230,7 @@ export const mockAts = new Hono();
 mockAts.route("/workday", workday);
 mockAts.route("/orc", orc);
 mockAts.route("/icims", icims);
+mockAts.route("/taleo", taleo);
 
 mockAts.get("/:style/jobs/:id", (c) => {
   const j = JOBS.find((x) => x.id === c.req.param("id") && x.style === c.req.param("style"));

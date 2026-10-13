@@ -49,6 +49,21 @@ chrome.runtime.onMessage.addListener((msg, sender, reply) => {
         const app = await api("POST", "/applications", { jobId: job.id, source: "extension" });
         return { job, application: app };
       }
+      case "ferry:fill":
+        return await api("POST", "/extension/fill", msg.body);
+      case "ferry:submitted":
+        return await api("POST", "/extension/submitted", { applicationId: msg.applicationId });
+      case "ferry:file": {
+        // The tailored résumé, fetched with the token here so the page never sees it.
+        const { apiUrl, token } = await settings();
+        const res = await fetch(`${apiUrl}${msg.path}`, { headers: { Authorization: `Bearer ${token}` } });
+        if (!res.ok) throw new Error(`Couldn't download the résumé (${res.status})`);
+        const buf = new Uint8Array(await res.arrayBuffer());
+        let bin = "";
+        for (let i = 0; i < buf.length; i += 0x8000) bin += String.fromCharCode(...buf.subarray(i, i + 0x8000));
+        const name = /filename="([^"]+)"/.exec(res.headers.get("content-disposition") || "")?.[1] || "Resume.pdf";
+        return { base64: btoa(bin), name };
+      }
       case "ferry:open": {
         const { apiUrl } = await settings();
         await chrome.tabs.create({ url: `${apiUrl}${msg.path || "/app"}` });

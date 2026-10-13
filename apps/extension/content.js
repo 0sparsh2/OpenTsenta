@@ -88,8 +88,10 @@
         <div class="head"><span>Ferry</span><button class="x" aria-label="Collapse">×</button></div>
         <div class="body">
           <div class="t"></div><div class="c"></div>
-          <div class="row"><button class="b add">Add to Ferry</button><button class="b p apply">Apply with Ferry</button></div>
+          <div class="row posting"><button class="b add">Add to Ferry</button><button class="b p apply">Apply with Ferry</button></div>
+          <div class="row form" hidden><button class="b p fill">Fill this form</button></div>
           <div class="out"></div>
+          <div class="row done" hidden><button class="b submitted">I submitted it</button></div>
         </div>
       </div>`;
     const $ = (s) => root.querySelector(s);
@@ -142,12 +144,58 @@
       e.target.disabled = true;
       show(await send("ferry:apply", { job }), true);
     };
+
+    // "Fill this form": for application forms in this tab (including sites that block Ferry's own browser).
+    let appId = null;
+    const refreshForm = () => {
+      const isForm = Boolean(window.__ferryFill?.detect());
+      $(".form").hidden = !isForm;
+      if (isForm) pill.lastChild.textContent = "Ferry can fill this form";
+      $(".posting").hidden = isForm && !job.title;
+    };
+    refreshForm();
+    setInterval(refreshForm, 2500);
+    $(".fill").onclick = async (e) => {
+      e.target.disabled = true;
+      out.innerHTML = `<div class="c">Reading the form and tailoring your résumé…</div>`;
+      const fields = window.__ferryFill.collect();
+      const posting = JSON.parse(sessionStorage.getItem("ferry:lastPosting") || "null");
+      const r = await send("ferry:fill", { body: { url: location.href, jobUrl: posting?.url, title: posting?.title || job.title || undefined, company: posting?.company || job.company || undefined, fields } });
+      e.target.disabled = false;
+      if (r.error) {
+        out.innerHTML = `<div class="err"></div>`;
+        out.firstChild.textContent = r.error;
+        return;
+      }
+      let file = null;
+      if (r.answers.some((a) => a.value === "resume")) {
+        const pdf = await send("ferry:file", { path: r.resumeUrl });
+        if (pdf.base64) file = new File([Uint8Array.from(atob(pdf.base64), (ch) => ch.charCodeAt(0))], pdf.name || "Resume.pdf", { type: "application/pdf" });
+      }
+      const res = await window.__ferryFill.apply(fields, r.answers, file);
+      e.target.textContent = "Fill again";
+      appId = r.applicationId;
+      out.innerHTML = `<div class="ok"></div>`;
+      out.firstChild.textContent = `Filled ${res.filled} of ${res.total} fields with your tailored answers.${res.left.length ? ` Still needs you: ${res.left.slice(0, 4).join("; ")}${res.left.length > 4 ? "…" : ""}.` : ""} Review everything, then submit it yourself.`;
+      $(".done").hidden = false;
+    };
+    $(".submitted").onclick = async (e) => {
+      if (!appId) return;
+      e.target.disabled = true;
+      const r = await send("ferry:submitted", { applicationId: appId });
+      out.innerHTML = `<div class="${r.error ? "err" : "ok"}"></div>`;
+      out.firstChild.textContent = r.error || "Marked as applied in Ferry. It's on your tracker now.";
+    };
     document.documentElement.appendChild(host);
   }
 
   let mountedFor = null;
   const run = () => {
-    const job = detect();
+    let job = detect();
+    // Remember the posting so a later application page in this tab knows which job it belongs to.
+    if (job) sessionStorage.setItem("ferry:lastPosting", JSON.stringify({ url: job.url, title: job.title, company: job.company }));
+    // No posting, but an application form (a separate apply page, a modal): offer to fill it.
+    if (!job && window.__ferryFill?.detect()) job = { url: location.href, title: "", company: "", location: "", description: "" };
     if (!job || mountedFor === job.url) return;
     document.getElementById("ferry-panel-host")?.remove();
     mountedFor = job.url;

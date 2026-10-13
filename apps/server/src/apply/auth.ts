@@ -200,10 +200,23 @@ export async function handleAuth(page: Page, ctx: AuthContext): Promise<{ ok: tr
         `Creating your candidate account at ${host} (${acct.email}) with ${acct.passwordKind === "application" ? "your application password" : "a generated password (saved in Settings → Employer accounts)"}`,
         "action",
       );
-      const emails = frame.locator("input[type=email]:visible:not([readonly]):not([disabled])");
-      const ec = await emails.count();
-      if (ec) for (let i = 0; i < ec; i++) await emails.nth(i).fill(acct.email);
-      else await (await emailInput(frame))?.fill(acct.email).catch(() => {});
+      // Every email box, plus a user-name box (Taleo and others): the email doubles as the user name.
+      const ids = frame.locator("input:visible:not([readonly]):not([disabled]):not([type=password]):not([type=hidden]):not([type=checkbox]):not([type=radio]):not([type=submit]):not([type=button])");
+      let filled = 0;
+      for (let i = 0, n = await ids.count(); i < n; i++) {
+        const el = ids.nth(i);
+        const desc = await el
+          .evaluate((e) => {
+            const i = e as HTMLInputElement;
+            return `${i.type} ${i.labels?.[0]?.innerText ?? ""} ${i.name} ${i.id} ${i.placeholder} ${i.getAttribute("aria-label") ?? ""} ${i.autocomplete}`.toLowerCase();
+          })
+          .catch(() => "");
+        if (/\bemail\b|e-mail/.test(desc) || /user ?name|login( id)?\b|user ?id\b/.test(desc)) {
+          await el.fill(acct.email).catch(() => {});
+          filled++;
+        }
+      }
+      if (!filled) await (await emailInput(frame))?.fill(acct.email).catch(() => {});
       const pws = frame.locator("input[type=password]:visible:not([readonly]):not([disabled])");
       for (let i = 0, n = await pws.count(); i < n; i++) await pws.nth(i).fill(acct.password);
       for (const [re, v] of [
