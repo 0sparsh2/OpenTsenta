@@ -8,6 +8,9 @@ import { toast } from "../components/toast";
 import { Button, Card, Input, Label, SectionTitle, Segmented, Select, Spinner, Toggle } from "../components/ui";
 import { TagInput } from "./Onboarding";
 
+const VISA_STATUSES = ["Green card (permanent resident)", "H-1B", "F-1 OPT / STEM OPT", "TN", "L-1", "O-1", "EAD (other)", "Other"];
+const CLEARANCES = ["None", "Public Trust", "Secret", "Top Secret", "TS/SCI", "TS/SCI with polygraph"];
+
 const EEO_OPTS = {
   gender: ["", "Male", "Female", "Non-binary", "Decline to self-identify"],
   hispanic: ["", "Yes", "No", "Decline to self-identify"],
@@ -133,6 +136,25 @@ export default function ProfilePage() {
             <div>
               <Label hint="ISO code, for passport / export-control questions">Citizenship</Label>
               <Input value={p.workAuth.citizenship ?? ""} onChange={(e) => set("workAuth", { citizenship: e.target.value.toUpperCase() || undefined })} placeholder="US" />
+            </div>
+            <div>
+              <Label hint="for work-eligibility questions">Visa or residency status</Label>
+              <Select value={p.workAuth.visaStatus ?? ""} onChange={(e) => set("workAuth", { visaStatus: e.target.value || undefined })}>
+                <option value="">Not set (Ferry won't claim one)</option>
+                {VISA_STATUSES.map((v) => (
+                  <option key={v}>{v}</option>
+                ))}
+                {p.workAuth.visaStatus && !VISA_STATUSES.includes(p.workAuth.visaStatus) && <option>{p.workAuth.visaStatus}</option>}
+              </Select>
+            </div>
+            <div>
+              <Label hint="for defense and government roles">Security clearance</Label>
+              <Select value={p.workAuth.clearance ?? ""} onChange={(e) => set("workAuth", { clearance: e.target.value || undefined })}>
+                <option value="">Not set (left for you)</option>
+                {CLEARANCES.map((v) => (
+                  <option key={v}>{v}</option>
+                ))}
+              </Select>
             </div>
             <div>
               <Label>Salary expectation</Label>

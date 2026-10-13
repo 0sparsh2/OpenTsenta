@@ -13,6 +13,7 @@ function collectFields(prefix: string) {
   type VisEl = HTMLElement & { checkVisibility?: (o?: object) => boolean };
   const norm = (s: string | null | undefined) =>
     (s ?? "")
+      .replace(/SVGs? (are )?not supported by this browser\.?/gi, " ") // icon fallback text (Workable)
       .replace(/[✱*]+/g, " ")
       .replace(/\s+/g, " ")
       .trim();
@@ -30,7 +31,17 @@ function collectFields(prefix: string) {
       // Custom radios/checkboxes/uploads hide the native input behind a visible label or button.
       if (!choice) return false;
       const lab = (el as HTMLInputElement).labels?.[0];
-      return isVis(lab) || isVis(el.parentElement);
+      if (isVis(lab) || isVis(el.parentElement)) return true;
+      // Upload menus (Jobvite) keep the file input in a hidden panel under a visible "Add Resume" section.
+      if (t === "file") {
+        let node = el.parentElement;
+        for (let d = 0; node && d < 8; d++, node = node.parentElement) {
+          if (!isVis(node)) continue;
+          const near = `${node.id} ${node.className} ${(node.previousElementSibling as HTMLElement | null)?.innerText ?? ""} ${(node as HTMLElement).innerText.slice(0, 300)}`;
+          return /resume|\bcv\b|curriculum|cover.?letter/i.test(near);
+        }
+      }
+      return false;
     }
     const r = (el as HTMLElement).getBoundingClientRect();
     return (r.width > 0 && r.height > 0) || choice;
@@ -53,16 +64,35 @@ function collectFields(prefix: string) {
     return norm(el.getAttribute("aria-label"));
   }
 
+  const FIELDS = "input:not([type=hidden]):not([type=button]):not([type=submit]):not([type=reset]):not([type=image]):not([aria-hidden=true]), select, textarea";
+  const LABEL_TAGS = "label, legend, h2, h3, h4, h5, [class*='label' i], [class*='question' i], [class*='title' i], [class*='header' i]";
+  /** A heading or label right before the field (Breezy interleaves "<h3>Email Address</h3><input>" in one container). */
+  function precedingLabel(el: HTMLElement): string {
+    let sib = el.previousElementSibling as HTMLElement | null;
+    // Up to 8 back, past explanatory paragraphs (EEO notices); a field or a rule ends the question before this one.
+    for (let i = 0; sib && i < 8; i++, sib = sib.previousElementSibling as HTMLElement | null) {
+      if (sib.tagName === "HR" || sib.matches(FIELDS) || sib.querySelector(FIELDS)) return "";
+      const t = textOf(sib);
+      if (t && t.length < 300 && !GENERIC.test(t) && sib.matches(LABEL_TAGS)) return t;
+    }
+    return "";
+  }
   /** Walk up from `start` looking for the question text of a field container. */
   function containerLabel(start: Element | null, owner: Element, loose: boolean): string {
     let node = start as HTMLElement | null;
     for (let depth = 0; node && depth < 6 && node !== document.body; depth++, node = node.parentElement) {
+      // Other fields in this container (not the owner's own options) make its text a section heading, not this label.
+      const others = Array.from(node.querySelectorAll(FIELDS)).filter((f) => !owner.contains(f) && !/^hp[_-]/i.test((f as HTMLInputElement).name ?? "")).length;
+      if (loose && others) return "";
       const sel = loose ? `${LABELISH}, :scope > p, :scope > span, :scope > div` : LABELISH;
-      for (const q of Array.from(node.querySelectorAll(sel))) {
-        if (q.contains(owner) || q.querySelector("input, select, textarea")) continue;
+      const cands = Array.from(node.querySelectorAll(sel)).filter((q) => {
+        if (q.contains(owner) || q.querySelector("input, select, textarea")) return false;
         const t = textOf(q);
-        if (t && t.length < 400 && !GENERIC.test(t)) return t;
-      }
+        return Boolean(t) && t.length < 400 && !GENERIC.test(t);
+      });
+      // One label over several fields labels them all (a date as three dropdowns); several labels: not ours to guess.
+      if (cands.length && (!others || cands.length === 1)) return textOf(cands[0]);
+      if (cands.length > 1) return "";
       if (!loose) {
         const prev = node.previousElementSibling;
         if (prev && !prev.querySelector("input, select, textarea")) {
@@ -70,6 +100,7 @@ function collectFields(prefix: string) {
           if (t && t.length < 300 && !GENERIC.test(t)) return t;
         }
       }
+      if (others) return ""; // the label for this field would have been inside this container
     }
     return "";
   }
@@ -78,19 +109,43 @@ function collectFields(prefix: string) {
     const a = ariaLabel(el);
     if (a && !GENERIC.test(a)) return a;
     if (el.id) {
-      const l = document.querySelector(`label[for="${CSS.escape(el.id)}"]`);
-      const t = textOf(l);
+      const l = document.querySelector(`label[for="${CSS.escape(el.id)}"]`) as HTMLElement | null;
+      const t = l ? ownText(l) : "";
       if (t && !GENERIC.test(t)) return t;
     }
     const wrap = el.closest("label");
     if (wrap && !GENERIC.test(ownText(wrap)) && ownText(wrap)) return ownText(wrap);
-    return containerLabel(el.parentElement, el, false) || containerLabel(el.parentElement, el, true) || norm(el.getAttribute("placeholder") || el.getAttribute("name"));
+    const before = precedingLabel(el);
+    if (before) return before;
+    const strict = containerLabel(el.parentElement, el, false);
+    if (strict) return strict;
+    // Placeholder-only forms (Breezy): "Full Name", "Email Address", "Phone Number".
+    const ph = norm(el.getAttribute("placeholder"));
+    if (ph && ph.length <= 40 && !/e\.g\.|example|\.\.\.|…|@|https?:/i.test(ph) && /name|e-?mail|phone|mobile|address|city|state|zip|postal|country|linkedin|website|portfolio|github|company|employer|title|school|university|degree|salary|location/i.test(ph)) return ph;
+    return containerLabel(el.parentElement, el, true) || ph || humanName(el.getAttribute("name"));
   }
+  /** "cCoverLetter" / "first_name" → "Cover Letter" / "first name". */
+  const humanName = (n: string | null) =>
+    norm(
+      (n ?? "")
+        .replace(/^c(?=[A-Z])/, "")
+        .replace(/([a-z])([A-Z])/g, "$1 $2")
+        .replace(/[_\-[\]]+/g, " "),
+    );
+  /** Bot traps: fields people never see, which must stay empty. */
+  const honeypot = (el: HTMLElement) => {
+    const id = `${el.getAttribute("name") ?? ""} ${el.id}`;
+    if (/(^|\s)hp[_-]|honeypot|^\s*(url|website)_?confirm/i.test(id)) return true;
+    if (/leave (this )?(field )?(blank|empty)|do not fill/i.test(labelOf(el))) return true;
+    const r = el.getBoundingClientRect();
+    return r.right < -100 || r.bottom < -100 || r.left > window.innerWidth + 1000;
+  };
 
   /** A wrapping <label>'s own words, without the text of the select/options inside it. */
   function ownText(el: HTMLElement): string {
     const clone = el.cloneNode(true) as HTMLElement;
-    for (const c of Array.from(clone.querySelectorAll("select, option, textarea, input, [role=listbox], [role=option]"))) c.remove();
+    // Also a dropdown's live status text ("No location found", "Loading") rendered inside the label.
+    for (const c of Array.from(clone.querySelectorAll("select, option, textarea, input, [role=listbox], [role=option], [aria-live], [role=status], [role=alert]"))) c.remove();
     return norm(clone.textContent || "");
   }
 
@@ -144,6 +199,8 @@ function collectFields(prefix: string) {
     }
     const owner = container ?? first;
     const start = (container ?? first.closest("label") ?? first).parentElement;
+    const before = precedingLabel((container ?? first.closest("label") ?? first) as HTMLElement);
+    if (before) return before;
     return containerLabel(start, owner, false) || containerLabel(start, owner, true) || norm(first.name);
   }
 
@@ -167,6 +224,15 @@ function collectFields(prefix: string) {
     }
     return el.getAttribute("data-ferry-id")!;
   };
+
+  // Jobvite: each attachment button ("Resume", "Cover Letter") owns a menu attached to <body> that holds its file
+  // input; buttons and menus come in the same order. The button says what the file is and whether it's required.
+  const attachFor = new Map<Element, { label: string; required: boolean }>();
+  const attachButtons = Array.from(document.querySelectorAll("button[jv-add-attachment]")) as HTMLElement[];
+  (Array.from(document.querySelectorAll(".jv-add-attachment input[type=file]")) as HTMLElement[]).forEach((inp, i) => {
+    const b = attachButtons[i];
+    if (b && isVis(b)) attachFor.set(inp, { label: b.getAttribute("attachment-label") || ariaLabel(b) || textOf(b), required: b.getAttribute("aria-required") === "true" });
+  });
 
   for (const el of Array.from(document.querySelectorAll("input, select, textarea")) as HTMLElement[]) {
     if (done.has(el)) continue;
@@ -193,7 +259,9 @@ function collectFields(prefix: string) {
     }
     // Validation mirrors (Greenhouse react-select keeps an aria-hidden twin that carries `required`).
     if (el.getAttribute("aria-hidden") === "true" && type !== "file") continue;
-    if (!visible(el)) continue;
+    const attached = attachFor.get(el);
+    if (!visible(el) && !attached) continue;
+    if (type !== "file" && honeypot(el)) continue;
 
     if (type === "radio" || type === "checkbox") {
       const container = groupContainer(input);
@@ -226,7 +294,7 @@ function collectFields(prefix: string) {
     }
 
     done.add(el);
-    const label = labelOf(el);
+    const label = attached?.label ?? labelOf(el);
     const raw = rawLabelText(el) || label;
     if (el.tagName === "SELECT") {
       const sel = el as HTMLSelectElement;
@@ -245,7 +313,7 @@ function collectFields(prefix: string) {
     const role = el.getAttribute("role");
     const isCombo = role === "combobox" || el.getAttribute("aria-autocomplete") === "list" || !!el.closest("[class*='select__' i], [class*='combobox' i]");
     const kind = el.tagName === "TEXTAREA" ? "textarea" : type === "file" ? "file" : isCombo ? "combobox" : ["email", "tel", "url", "number", "date"].includes(type) ? type : "text";
-    let required = isRequired(el, label, raw);
+    let required = attached ? attached.required : isRequired(el, label, raw);
     if (!required && kind === "combobox") {
       let box: HTMLElement | null = el.parentElement;
       for (let d = 0; box && d < 5 && !required; d++, box = box.parentElement) {

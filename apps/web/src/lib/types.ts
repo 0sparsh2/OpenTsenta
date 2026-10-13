@@ -254,7 +254,7 @@ export interface ApplicationDetail extends ApplicationRow {
 
 export interface Profile {
   personal: { firstName: string; lastName: string; email: string; phone?: string; address1?: string; postalCode?: string; city?: string; region?: string; country?: string; linkedin?: string; github?: string; website?: string; pronouns?: string };
-  workAuth: { authorizedCountries: string[]; needsSponsorship: boolean; visaStatus?: string; citizenship?: string };
+  workAuth: { authorizedCountries: string[]; needsSponsorship: boolean; visaStatus?: string; citizenship?: string; clearance?: string };
   eeo: { gender?: string; race?: string; veteran?: string; disability?: string; hispanic?: string };
   preferences: { titles: string[]; locations: string[]; workplace: "any" | "remote" | "hybrid" | "onsite"; seniority: string[]; minSalary?: number; excludeCompanies: string[]; keywords: string[] };
   logistics: { salaryExpectation?: string; noticePeriod?: string; earliestStart?: string; willingToRelocate?: boolean; yearsOfExperience?: number };

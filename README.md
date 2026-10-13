@@ -14,7 +14,7 @@ find ──▶ prep ──▶ apply ──▶ track
  │        │        └ Playwright agent: account wall (sign in / create + email-code verify) → fields → profile rules,
  │        │          memory, Claude → fill → read-back → review gate → submit → confirmation
  │        └ per-role résumé rewrite (diff + ATS keyword score), cover letter, ATS-safe PDF
- └ 266 boards on Greenhouse · Ashby · Lever · Workday · iCIMS · Oracle Recruiting · SuccessFactors · Taleo · SmartRecruiters · Workable
+ └ 303 boards on Greenhouse · Ashby · Lever · Workday · iCIMS · Oracle Recruiting · SuccessFactors · Taleo · SmartRecruiters · Workable · Rippling · Pinpoint · BambooHR · Breezy HR
 ```
 
 ## Quick start
@@ -70,8 +70,10 @@ and the confirmation email land in your inbox and move the tracker.
 ## Job-site coverage
 
 Measured with `scripts/coverage.ts`, which runs real postings through the agent in dry-run mode with a throwaway persona.
-Real submission and account creation are forced off in these runs. Flows behind an account wall are verified end to
-end against local sandboxes that mirror them.
+Real submission and account creation are forced off in these runs, and a dry run on a real employer stops before
+Next on multi-step forms (Next would send that page to the employer). Flows behind an account wall or past page one are
+verified end to end against local sandboxes that mirror them. Percentages are required fields filled from the
+résumé and profile alone, without Claude, in the latest sweep.
 
 | ATS | Finding jobs | Applying |
 |---|---|---|
@@ -84,7 +86,13 @@ end against local sandboxes that mirror them.
 | SuccessFactors | Career-site search, 14 boards | Sign-in and the talent-community email step are recognized. Tenants with a captcha on sign-in are handed back. |
 | Taleo | Public REST search, 4 boards | Apply Online, New User registration, privacy agreement, five-step flow with eSignature and review (sandbox) |
 | SmartRecruiters | Public API | Forms sit behind DataDome bot protection, so Ferry hands them back. The extension fills the one-click form in your own browser: web components, city autocomplete, dropdowns, résumé (sandbox). |
-| Workable | Public API | One-page forms |
+| Workable | Public API (every page), 18 boards | One-page forms, 83% |
+| Rippling | Public board API, 11 boards | One-page forms, 93% |
+| Pinpoint | Public postings feed, 4 boards | One-page forms, 78% (graduation day and skill ratings are left to you) |
+| BambooHR | Public careers API, 3 boards | One-page forms, 97% |
+| Breezy HR | Public JSON feed, 2 boards | One-page forms, placeholder-only labels, bot-trap fields left empty |
+| Jobvite | Paste a job link | Location gate, résumé upload menu, 100%; a reCAPTCHA before submit is handed back |
+| JazzHR, Paylocity | Paste a job link | One-page forms, 80% and 86% |
 | LinkedIn | Paste a job link | Matched to the same role on the company's own ATS when Ferry watches it. Easy Apply jobs are handed back; the extension fills each step of the Easy Apply modal in your own browser (sandbox). Ferry never uses your LinkedIn login. |
 | Anything else | Paste a job link (JSON-LD or microdata) | Generic form agent, plus the Claude navigator when a key is set |
 
@@ -159,7 +167,7 @@ Or use `npx ferry token <api-token>`. Then run `ferry matches`, `ferry apply <jo
 ## Tests and tools
 
 ```bash
-npm test                                                  # 38 end-to-end + integration tests, no network or keys needed
+npm test                                                  # 39 end-to-end + integration tests, no network or keys needed
 npx tsx apps/server/scripts/inspect-form.ts <job-url>     # read-only: the fields the agent would see on a real form
 npx tsx apps/server/scripts/inspect-workday.ts <url>      # read-only: walk a real Workday posting to its sign-in step
 npx tsx apps/server/scripts/inspect-apply.ts <url>        # read-only: follow Apply on any posting to its form or sign-in wall

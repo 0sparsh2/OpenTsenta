@@ -181,6 +181,7 @@ const acmeForm = (j: (typeof JOBS)[number]) => `
   <div class="field"><label for="cover_letter">Cover Letter</label><input id="cover_letter" name="cover_letter" type="file" accept=".pdf,.doc,.docx"></div>
   <div class="field"><label for="linkedin">LinkedIn Profile</label><input id="linkedin" name="linkedin" type="url"></div>
   <div class="field"><label for="website">Website</label><input id="website" name="website" type="url"></div>
+  <div class="field" style="position:absolute;left:-9999px;top:0"><label for="company_website_url">Company website</label><input id="company_website_url" name="company_website_url" type="text" tabindex="-1" autocomplete="off"></div>
   <div class="field"><label for="source">How did you hear about this job? *</label>
     <select id="source" name="source" required><option value="">Select...</option><option>LinkedIn</option><option>Company Website</option><option>Referral</option><option>Other</option></select></div>
   <fieldset class="field" style="border:0;padding:0"><legend class="q">Are you legally authorized to work in the United States? *</legend>
@@ -271,6 +272,8 @@ mockAts.post("/:style/jobs/:id/submit", async (c) => {
       if (v.size) files.push({ field: k, name: v.name, size: v.size });
     } else fields[k] = String(v);
   }
+  // A bot trap: people never see this field, so anything in it means a script filled the form.
+  if (fields.company_website_url) return c.text("Your application could not be submitted.", 400);
   const draft = { job: `${c.req.param("style")}:${c.req.param("id")}`, at: new Date().toISOString(), fields, files };
   if (c.req.param("style") === "secure") {
     // Hold the application and email an 8-character security code, as Greenhouse does on some boards.

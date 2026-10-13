@@ -39,7 +39,7 @@ const COUNTRY_NAMES: Record<string, string> = {
   NL: "Netherlands",
   IE: "Ireland",
 };
-const countryName = (c?: string) => (c ? (COUNTRY_NAMES[c.toUpperCase()] ?? c) : "");
+export const countryName = (c?: string) => (c ? (COUNTRY_NAMES[c.toUpperCase()] ?? c) : "");
 const DIAL_CODES: Record<string, string> = { US: "+1", CA: "+1", GB: "+44", IN: "+91", DE: "+49", FR: "+33", AU: "+61", SG: "+65", NL: "+31", IE: "+353" };
 
 const withScheme = (u?: string) => (u ? (/^https?:\/\//i.test(u) ? u : `https://${u.replace(/^\/+/, "")}`) : undefined);
@@ -148,6 +148,72 @@ function homeNames(c: AnswerContext): string[] {
   return names.filter((x): x is string => Boolean(x)).map((x) => x.toLowerCase());
 }
 
+/** "U.S. Citizen/Permanent Resident" vs "Non-citizen allowed to work for any employer": only what's on file. */
+function eligibilityOption(c: AnswerContext, f: FormField): string | undefined {
+  if (!f.options?.length) return undefined;
+  const w = c.profile.workAuth;
+  const citizen = w.citizenship ? w.citizenship.toUpperCase() === (jobCountry(c.job) ?? "US") : undefined;
+  const lpr = /green card|permanent resident|\blpr\b/i.test(w.visaStatus ?? "");
+  const opts = f.options.map((o) => ({ o, l: o.toLowerCase() }));
+  const ok = opts.filter((x) => /authori[sz]ed|citizen|permanent resident|green card|eligible|allowed to work|right to work/.test(x.l) && !/\bnot\b|require|need|sponsor|seeking|current employer|pending/.test(x.l));
+  const citizenOpt = (l: string) => /\bcitizen/.test(l) && !/non.?citizen/.test(l);
+  const lprOpt = (l: string) => /permanent resident|green card/.test(l);
+  if (citizen) return ok.find((x) => citizenOpt(x.l))?.o ?? ok.find((x) => !lprOpt(x.l))?.o;
+  if (lpr) return ok.find((x) => lprOpt(x.l))?.o ?? ok.find((x) => !citizenOpt(x.l))?.o;
+  // Citizenship not on file: only an option that makes no claim about it ("Authorized to work in the US").
+  const neutral = ok.find((x) => !/citizen|permanent resident|green card/.test(x.l));
+  if (citizen === undefined) return neutral?.o;
+  // A non-citizen without a green card: "Non-citizen allowed to work for any employer", or the neutral option.
+  return ok.find((x) => /non.?citizen/.test(x.l))?.o ?? neutral?.o;
+}
+/** 0 none … 5 TS/SCI with polygraph. */
+function clearanceRank(t: string): number {
+  const l = t.toLowerCase();
+  if (/ts ?\/? ?sci|sci\b/.test(l)) return /poly/.test(l) ? 5 : 4;
+  if (/top secret/.test(l)) return 3;
+  if (/\bsecret\b/.test(l)) return 2;
+  if (/public trust/.test(l)) return 1;
+  return 0;
+}
+const clearanceList = (o?: string[]) => (o ?? []).filter((x) => /uncleared|public trust|\bsecret\b|top secret|ts ?\/? ?sci/i.test(x)).length >= 2;
+/** Security clearance questions, from the level on file; not on file → left for you. */
+function clearanceAnswer(c: AnswerContext, f: FormField): Value | undefined {
+  const have = c.profile.workAuth.clearance;
+  if (!have) return undefined;
+  const rank = /^none$/i.test(have) ? 0 : clearanceRank(have);
+  if (clearanceList(f.options)) {
+    if (!rank) return f.options!.find((o) => /none|uncleared|no clearance|not applicable|n\/a|^no$/i.test(o.trim()));
+    // The listed level that matches yours, else the highest listed one below it (TS/SCI → "Top Secret").
+    const listed = f.options!.map((o) => ({ o, r: clearanceRank(o) })).filter((x) => x.r > 0 && x.r <= rank);
+    return listed.sort((x, y) => y.r - x.r)[0]?.o;
+  }
+  // "Do you hold an active Secret clearance?": yes when yours is at least that (any real clearance when unnamed).
+  const asked = clearanceRank(f.label) || 2;
+  const v = rank >= asked ? "Yes" : "No";
+  return f.options?.length ? (pickOption(f.options, v) ?? undefined) : f.kind === "text" || f.kind === "textarea" ? have : v;
+}
+
+/** U.S. person (export control): a citizen or permanent resident. Unknown → left for you. */
+function usPerson(c: AnswerContext): Value | undefined {
+  const w = c.profile.workAuth;
+  if (w.citizenship?.toUpperCase() === "US" || /green card|permanent resident|\blpr\b/i.test(w.visaStatus ?? "")) return "Yes";
+  return w.citizenship ? "No" : undefined;
+}
+const today = (f: FormField) => {
+  const d = new Date();
+  const p2 = (n: number) => String(n).padStart(2, "0");
+  return f.kind === "date" ? `${d.getFullYear()}-${p2(d.getMonth() + 1)}-${p2(d.getDate())}` : `${p2(d.getMonth() + 1)}/${p2(d.getDate())}/${d.getFullYear()}`;
+};
+/** "$180,000" / "180k" / "$150,000 - $180,000" → "180000" / "180000" / "150000" for number inputs. */
+const firstAmount = (s?: string) => {
+  const m = s?.replace(/,/g, "").match(/(\d+(?:\.\d+)?)\s*(k)?/i);
+  return m ? String(Math.round(Number(m[1]) * (m[2] ? 1000 : 1))) : undefined;
+};
+const monthYear = (ym?: string) => {
+  const m = ym?.match(/^(\d{4})(?:-(\d{2}))?/);
+  return m ? (m[2] ? `${MONTH_NAMES[Number(m[2]) - 1].slice(0, 3)} ${m[1]}` : m[1]) : "";
+};
+
 /** Pick the option that best states the candidate's work authorization. */
 function authorizationOption(c: AnswerContext, f: FormField): string | undefined {
   if (!f.options?.length) return yes(c.profile.workAuth.authorizedCountries.includes(jobCountry(c.job) ?? c.profile.workAuth.authorizedCountries[0] ?? "US"));
@@ -156,7 +222,7 @@ function authorizationOption(c: AnswerContext, f: FormField): string | undefined
   const opts = f.options.map((o) => ({ o, l: o.toLowerCase() }));
   const yn = pickOption(f.options, authorized ? "yes" : "no");
   if (yn && f.options.length <= 3) return yn;
-  if (authorized && !needs) return opts.find((x) => /authori[sz]ed|citizen|permanent resident|green card|eligible/.test(x.l) && !/not |require|need|sponsor/.test(x.l))?.o;
+  if (authorized && !needs) return eligibilityOption(c, f);
   if (needs) return opts.find((x) => /require|need|sponsor/.test(x.l))?.o;
   return opts.find((x) => /not authori[sz]ed|no\b/.test(x.l))?.o;
 }
@@ -284,6 +350,19 @@ function educationLevel(c: AnswerContext, f: FormField): Value | undefined {
   return f.options.find((o) => o.toLowerCase().includes(level === "doctorate" ? "doctor" : level) || (level === "doctorate" && /ph\.?d/i.test(o))) ?? undefined;
 }
 
+/** Graduation date as Month / Year dropdowns (Pinpoint), for the degree the question names. Day: left for you. */
+function graduationPart(c: AnswerContext, f: FormField): Value | undefined {
+  if (!f.options?.length) return undefined;
+  const asked = degreeRank(f.label, true);
+  const edu = (asked ? c.doc.education.find((e) => degreeRank(`${e.degree ?? ""} ${e.field ?? ""}`) === asked) : undefined) ?? c.doc.education[0];
+  const m = edu?.end?.match(/^(\d{4})(?:-(\d{2}))?/);
+  if (!m) return undefined;
+  const opts = f.options.map((o) => o.trim().toLowerCase());
+  if (opts.some((o) => /^(january|february|march|jan|feb|mar)$/.test(o))) return m[2] ? (pickOption(f.options, MONTH_NAMES[Number(m[2]) - 1]) ?? undefined) : undefined;
+  if (opts.filter((o) => /^(19|20)\d\d$/.test(o)).length >= 2) return f.options.find((o) => o.trim() === m[1]);
+  return undefined;
+}
+
 /** 1 associate … 4 doctorate; the lowest level the text names (so "a bachelor's or master's" asks for a bachelor's). */
 function degreeRank(text: string, lowest = false): number {
   const d = text.toLowerCase();
@@ -357,7 +436,8 @@ const RULES: Rule[] = [
       return (city && pickOption(f.options, city)) ?? (p.region ? pickOption(f.options, US_STATES[p.region.toUpperCase()] ?? p.region) : null) ?? pickOption(f.options, countryName(p.country)) ?? undefined;
     },
   },
-  { re: /^country( of residence)?$|which country|country where you (currently )?(live|reside)|select the country/, maxLen: 80, value: (c) => countryName(c.profile.personal.country) || undefined },
+  // "Country" (and "Country United States": a dropdown's current text caught in its label).
+  { re: /^country( of residence)?( [a-z ]{2,30})?$|which country|country where you (currently )?(live|reside)|select the country/, maxLen: 80, not: /citizenship|code|birth|passport|issu|origin/, value: (c) => countryName(c.profile.personal.country) || undefined },
   { re: /^state( \/ province)?$|^province$|state of residence|^state province$/, value: (c, f) => stateValue(c.profile.personal.region, f.options) },
   { re: /address line 1|^address$|street address|^address 1$/, kinds: TEXTY, value: (c) => c.profile.personal.address1 },
   { re: /postal code|zip( code)?|postcode/, kinds: TEXTY, maxLen: 30, value: (c) => c.profile.personal.postalCode },
@@ -378,11 +458,16 @@ const RULES: Rule[] = [
     },
   },
   // background
-  { re: /current (company|employer)|most recent (company|employer)|current or previous employer/, kinds: TEXTY, maxLen: 45, not: /why|leav|reason/, value: (c) => c.doc.experience[0]?.company },
-  { re: /current (job )?title|current (role|position)|most recent (job )?title|current or previous job title/, kinds: TEXTY, maxLen: 45, not: /why|leav|reason|describe|responsib/, value: (c) => c.doc.experience[0]?.title },
-  { re: /^(school|university|college|institution)( name)?$|school or university|university or college|which (school|university)|^education institution/, value: (c) => c.doc.education[0]?.school },
+  { re: /^dates? (of )?employ(ed|ment)$/, kinds: TEXTY, value: (c) => {
+      const e = c.doc.experience[0];
+      return e?.start ? `${monthYear(e.start)} - ${e.current || !e.end ? "Present" : monthYear(e.end)}` : undefined;
+    } },
+  { re: /current (company|employer)|most recent (company|employer)|current or previous employer|^latest employer( name)?$/, kinds: TEXTY, maxLen: 45, not: /why|leav|reason/, value: (c) => c.doc.experience[0]?.company },
+  { re: /current (job )?title|current (role|position)|most recent (job )?title|current or previous job title|^latest (job )?title$/, kinds: TEXTY, maxLen: 45, not: /why|leav|reason|describe|responsib/, value: (c) => c.doc.experience[0]?.title },
+  { re: /^(school|university|college|institution)( name)?$|school or university|university or college|^college university$|^university college$|which (school|university)|^education institution/, value: (c) => c.doc.education[0]?.school },
   { re: /^degree( type)?$/, value: (c) => c.doc.education[0]?.degree },
   { re: /^(discipline|major|field of study)$|area of study/, value: (c) => c.doc.education[0]?.field },
+  { re: /graduation (year|date)|graduat(e|ion) (year|date)|year of graduation/, kinds: ["select", "combobox", "listbox"], value: (c, f) => graduationPart(c, f) },
   { re: /graduation (date|year)|year of graduation/, maxLen: 60, value: (c) => c.doc.education[0]?.end },
   { re: /\bgpa\b/, maxLen: 40, value: (c) => c.doc.education[0]?.gpa },
   // GPA dropdowns ("3.7 out of 4.0"); graduate GPA with no graduate degree → Not Applicable.
@@ -391,9 +476,10 @@ const RULES: Rule[] = [
   // Total years, unless the question names one technology Ferry couldn't find in your roles (only you know that).
   { re: /years of (?:[\w-]+ ){0,3}experience/, kinds: ["text", "number", "select", "radio", "combobox"], value: (c, f) => namedSkill(f) ? undefined : (c.profile.logistics.yearsOfExperience != null ? String(c.profile.logistics.yearsOfExperience) : undefined) },
   // logistics
-  { re: /salary|compensation expectation|desired (pay|compensation)|expected (pay|compensation)/, kinds: TEXTY, value: (c) => c.profile.logistics.salaryExpectation },
+  { re: /salary|compensation expectation|desired (pay|compensation)|expected (pay|compensation)/, kinds: TEXTY, value: (c, f) => (f.kind === "number" ? firstAmount(c.profile.logistics.salaryExpectation) : c.profile.logistics.salaryExpectation) },
   { re: /notice period/, kinds: TEXTY, value: (c) => c.profile.logistics.noticePeriod },
-  { re: /start date|when (can|could) you start|earliest (start|available)/, kinds: TEXTY, value: (c) => c.profile.logistics.earliestStart },
+  { re: /signature date|date signed|^today s date$|^current date$/, kinds: ["text", "date"], value: (_c, f) => today(f) },
+  { re: /start date|when (can|could) you start|earliest (start|available)|available to (begin|start)|begin work|^date available$|availability date|^available (start )?date$/, kinds: TEXTY, value: (c) => c.profile.logistics.earliestStart },
   {
     re: /(how|where) did you (first )?(hear|find|learn|see|come across)|how you (first )?(heard|found|learned)|hear about (this|the|us)|how did you find (out|us)|^source$|referral source|referred by/,
     kinds: [...CHOICE, "text", "textarea"],
@@ -428,7 +514,7 @@ const RULES: Rule[] = [
   { re: /^(education )?start (date )?year$/, kinds: ["text", "number", "select", "combobox"], value: (c) => c.doc.education[0]?.start?.slice(0, 4) },
   { re: /^(education )?(end|graduation) (date )?month$/, kinds: ["text", "select", "combobox"], value: (c, f) => monthOf(c.doc.education[0]?.end, f) },
   { re: /^(education )?start (date )?month$/, kinds: ["text", "select", "combobox"], value: (c, f) => monthOf(c.doc.education[0]?.start, f) },
-  { re: /(are you|currently) (an? )?(\w+ )?(student|enrolled)|graduating (in|this)|expected graduation/, kinds: ["radio", "select", "combobox"], value: (c) => (isStudent(c) ? undefined : "No") },
+  { re: /(are you|currently) (an? )?(\w+ )?(student|enrolled)|graduating (in|this)|expected graduation/, kinds: ["radio", "select", "combobox"], value: (c, f) => (isStudent(c) ? undefined : f.options?.length ? (pickOption(f.options, "No") ?? undefined) : "No") },
   { re: /^(preferred|primary) language|language preference|choose your preferred language/, kinds: [...CHOICE, "listbox"], value: (_c, f) => (f.options?.length ? (pickOption(f.options, "English") ?? undefined) : "English") },
   { re: /(at least|over) 18|18 years|age of majority/, value: () => "Yes" },
   // voluntary self-identification
@@ -437,6 +523,17 @@ const RULES: Rule[] = [
   { re: /\brace\b|ethnicity/, kinds: ["select", "radio", "combobox"], maxLen: 60, value: (c) => c.profile.eeo.race ?? "__decline__" },
   { re: /veteran/, kinds: ["select", "radio", "combobox"], value: (c) => c.profile.eeo.veteran ?? "__decline__" },
   { re: /disabilit/, kinds: ["select", "radio", "combobox"], value: (c) => c.profile.eeo.disability ?? "__decline__" },
+  { re: /security clearance|clearance level|level of (active )?clearance|(active|current) clearance|clearance (do you|you) (currently )?(hold|have)|(hold|have) an? (active |current )?(\w+ ){0,3}clearance/, not: /eligib|able to obtain|willing|obtain/, value: (c, f) => clearanceAnswer(c, f) },
+  // A bare "Select" whose options are clearance levels (Rippling forms that lose the question text).
+  { re: /^(select|choose)( one)?$/, kinds: [...CHOICE, "listbox"], value: (c, f) => (clearanceList(f.options) ? clearanceAnswer(c, f) : undefined) },
+  { re: /\bu ?s person\b/, kinds: CHOICE, value: (c, f) => { const v = usPerson(c); return v && f.options?.length ? (pickOption(f.options, v as string) ?? undefined) : v; } },
+  { re: /employment eligibility|work eligibility|citizenship (and|or) (employment|work)/, kinds: CHOICE, value: (c, f) => eligibilityOption(c, f) },
+  { re: /\bu ?s citizen|united states citizen|citizen of the united states/, kinds: CHOICE, not: /non.?citizen|permanent resident|green card|\bor\b/, value: (c, f) => {
+      const cz = c.profile.workAuth.citizenship;
+      if (!cz) return undefined;
+      const v = cz.toUpperCase() === "US" ? "Yes" : "No";
+      return f.options?.length ? (pickOption(f.options, v) ?? undefined) : v;
+    } },
   { re: /passport country|country of citizenship|citizenship|nationality/, maxLen: 70, value: (c, f) => {
       const cz = c.profile.workAuth.citizenship;
       if (!cz) return undefined;
@@ -445,18 +542,26 @@ const RULES: Rule[] = [
   // consents and acknowledgements
   { re: /share (my|your) (resume|information|data|profile|contact)|third.?part(y|ies)|external .*partners/, kinds: ["checkbox", "select", "radio", "combobox"], value: (_c, f) => (f.options?.length ? (pickOption(f.options, "no") ?? undefined) : "No") },
   { re: /(text|sms) message|marketing|newsletter|talent community|whatsapp/, kinds: ["checkbox", "select", "radio", "combobox"], value: (_c, f) => (f.options?.length ? (pickOption(f.options, "no") ?? undefined) : "No") },
-  { re: /privacy|consent|acknowledg|i agree|terms|certify|attest|accurate and complete|double.?check|i have read|true and correct/, kinds: ["checkbox"], value: () => "Yes" },
+  { re: /privacy|consent|acknowledg|i agree|terms|certify|attest|accurate and complete|double.?check|i have read|true and correct|process(ing)? (of )?(my |your )?personal (information|data)/, kinds: ["checkbox"], value: () => "Yes" },
   // "Any offer is contingent on a background check and drug screen" [Yes/No]: an acknowledgment, not a disclosure.
   { re: /(offer|employment) (of employment )?(is |will be )?contingent (up)?on|contingent (up)?on (a |the )?(successful )?(background|criminal|drug)/, kinds: ["select", "radio", "combobox"], value: (_c, f) => f.options?.find((o) => AFFIRM_RE.test(o.trim())) },
   {
-    re: /privacy|consent|acknowledg|i agree|terms|certify|attest|accurate and complete|double.?check|i have read|true and correct/,
+    re: /privacy|consent|acknowledg|i agree|terms|certify|attest|accurate and complete|double.?check|i have read|true and correct|process(ing)? (of )?(my |your )?personal (information|data)/,
     kinds: ["select", "radio", "combobox"],
     value: (_c, f) => f.options?.find((o) => AFFIRM_RE.test(o.trim())) ?? (f.options?.length === 1 ? f.options[0] : undefined),
   },
 ];
 
+/** Text pages leave in labels: icon fallbacks, and a dropdown's placeholder ("State Select a state"). */
+export const cleanLabel = (l: string) =>
+  l
+    .replace(/SVGs? (are )?not supported by this browser\.?/gi, " ")
+    .replace(/\s*(no (locations?|results|options|matches) found\b.*|loading\.{0,3})$/i, "")
+    .replace(/\s+(please )?(select|choose)( an?| one| your)?( option| state| country| province| region| item)?\s*\.{0,3}\s*$/i, "")
+    .trim();
+
 function fromRules(c: AnswerContext, field: FormField): { value: Value; source: FilledField["source"] } | null {
-  const label = normalizeQuestion(field.label);
+  const label = normalizeQuestion(cleanLabel(field.label));
   if (!label) return null;
   // Button dropdowns behave like selects for answering purposes.
   const f: FormField = field.kind === "listbox" ? { ...field, kind: "select" } : field;

@@ -109,6 +109,14 @@
     return (root.getElementById ? root.getElementById(id) : null) || document.getElementById(id);
   };
 
+  /** Bot traps: fields people never see, which must stay empty (filling one flags the application). */
+  const honeypot = (el) => {
+    if (/(^|\s)hp[_-]|honeypot/i.test(`${el.name || ""} ${el.id || ""}`)) return true;
+    if (/leave (this )?(field )?(blank|empty)|do not fill/i.test(labelFor(el))) return true;
+    const r = el.getBoundingClientRect();
+    return r.right < -100 || r.bottom < -100 || r.left > window.innerWidth + 1000;
+  };
+
   /** The fields on screen right now: [{field, els}]. Doesn't touch the page. */
   function scan() {
     const out = [];
@@ -121,6 +129,7 @@
       const type = (tag === "INPUT" ? el.type : tag).toLowerCase();
       if ((tag === "INPUT" && ["hidden", "submit", "button", "reset", "image", "search", "password"].includes(type)) || el.disabled || (el.readOnly && type !== "file")) continue;
       if (type !== "file" && !visible(el)) continue;
+      if (type !== "file" && honeypot(el)) continue;
       // Site chrome (search boxes, nav) isn't part of the application.
       if (!within && el.closest("header, nav, footer")) continue;
       const native = ["INPUT", "SELECT", "TEXTAREA"].includes(tag);

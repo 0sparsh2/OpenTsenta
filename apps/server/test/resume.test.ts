@@ -328,6 +328,10 @@ test("answer rules: AI-bait questions go to you; education, location, and family
     { id: "j", label: "How many years of work experience do you have with Rust?", kind: "text", required: true },
     { id: "k", label: "Phone country code", kind: "select", required: true, options: ["Canada (+1)", "India (+91)", "United States (+1)"] },
     { id: "l", label: "Have you completed the following level of education: Master's Degree?", kind: "radio", required: true, options: ["Yes", "No"] },
+    { id: "m", label: "What's your citizenship / employment eligibility?", kind: "select", required: true, options: ["I am a U.S. Citizen/Permanent Resident", "Non-citizen allowed to work for any employer"] },
+    { id: "n", label: "Please indicate your expected graduation year/date (for your bachelor's degree)", kind: "select", required: true, options: ["Year", "2020", "2019"] },
+    { id: "o", label: "Please indicate your expected graduation year/date (for your bachelor's degree)", kind: "select", required: true, options: ["Day", "1", "2"] },
+    { id: "p", label: "State Select a state", kind: "combobox", required: true },
   ] as any[];
   const out = await answerFields({ profile: { ...profile, logistics: { yearsOfExperience: 6 } }, doc, job, resumePdf: null, coverPdf: null, coverText: null, prior: [], autoWrite: true }, fields);
   const v = (id: string) => out.find((f: any) => f.id === id)!;
@@ -344,4 +348,10 @@ test("answer rules: AI-bait questions go to you; education, location, and family
   assert.equal(v("j").value, null); // a listed skill with no role behind it: only you know how long
   assert.equal(v("k").value, "United States (+1)");
   assert.equal(v("l").value, "No");
+  assert.equal(v("m").value, null, "citizenship isn't on file, so Ferry doesn't claim either way");
+  assert.equal(v("n").value, "2019");
+  assert.equal(v("o").value, null, "the day isn't on the résumé");
+  assert.equal(v("p").value, "CA", "a dropdown's placeholder in the label doesn't hide the question");
+  const citizen = await answerFields({ profile: { ...profile, workAuth: { authorizedCountries: ["US"], needsSponsorship: false, citizenship: "US" } }, doc, job, resumePdf: null, coverPdf: null, coverText: null, prior: [], autoWrite: false }, [fields.find((f) => f.id === "m")]);
+  assert.equal(citizen[0].value, "I am a U.S. Citizen/Permanent Resident");
 });

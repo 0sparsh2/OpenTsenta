@@ -24,7 +24,7 @@ import {
   type Application,
 } from "../store.ts";
 import type { FilledField, PipelineStatus, TraceStep } from "../types.ts";
-import { answerFields, memorable, missingRequired } from "./answer.ts";
+import { answerFields, countryName, memorable, missingRequired, pickOption } from "./answer.ts";
 import { detectAuthState, handleAuth, submitTimeCode } from "./auth.ts";
 import { extractFields, pageText, type FrameField } from "./extract.ts";
 import { botWall, CONFIRMATION_RE, dismissCookieBanner, findAgreement, fillField, findApplyEntry, findApplyManual, findNext, findSubmit, hasCaptcha, probeComboboxOptions, verifyAndRepair, visibleErrors } from "./fill.ts";
@@ -228,6 +228,29 @@ async function openForm(run: Run, page: BrowserPage, target: string): Promise<{ 
       fields = await extractFields(page);
     }
   };
+  // A one-question gate in front of the form (Jobvite's "Location of Residence and Language"): answer it and go on.
+  const gate = async () => {
+    const asked = applicationFields(fields);
+    if (usable(fields) || !asked.length || asked.length > 2) return;
+    if (!asked.every((f) => (f.kind === "select" || f.kind === "radio") && f.options?.length && /location|residen|language|country|region|where/i.test(f.label))) return;
+    const next = await findNext(page);
+    if (!next) return;
+    const country = getUser(run.app.userId)?.profile.personal.country;
+    const answers: (FrameField & FilledField)[] = [];
+    for (const f of asked) {
+      const value = f.options!.length === 1 ? f.options![0] : (pickOption(f.options, countryName(country)) ?? pickOption(f.options, "english"));
+      if (!value) return; // a real choice Ferry can't make: leave it
+      answers.push({ ...f, value, source: "profile" } as FrameField & FilledField);
+    }
+    run.think(`Answering "${asked[0].label}" to reach the form`, "action");
+    for (const a of answers) await fillField(page, a);
+    await next.click();
+    await settle();
+    for (let i = 0; i < 10 && !usable(fields); i++) {
+      fields = await extractFields(page);
+      if (!usable(fields)) await sleep(500);
+    }
+  };
   if (!usable(fields)) {
     // Single-page career sites render the Apply button after the rest of the page (and after cookie banners).
     let entry = await findApplyEntry(page);
@@ -275,6 +298,7 @@ async function openForm(run: Run, page: BrowserPage, target: string): Promise<{ 
       fields = await extractFields(page);
       await agreement();
     }
+    await gate();
   }
   if (!usable(fields)) {
     const r = await navigate(page, `Open the application form for "${job.title}" at ${job.company}`, (t) => run.think(t));
@@ -362,6 +386,7 @@ async function execute(run: Run, opts: RunOptions) {
 
     const allFilled: (FrameField & FilledField)[] = [];
     let pageNo = 1;
+    let stoppedBeforeNext = false;
     for (; pageNo <= MAX_PAGES; pageNo++) {
       run.app = patchApplication(run.app.id, { currentPage: pageNo });
       run.think(`Page ${pageNo}: found ${fields.length} field${fields.length === 1 ? "" : "s"}`);
@@ -374,6 +399,12 @@ async function execute(run: Run, opts: RunOptions) {
       const next = submit ? null : await findNext(page);
       if (!next) break;
       if (missingRequired(filled).length) break;
+      if (realDryRun) {
+        // Next sends this page to the employer (Workday, iCIMS and others save each step): not in a dry run.
+        stoppedBeforeNext = true;
+        run.think("Dry run: stopped before Next, since going on would send this page to the employer (set ALLOW_REAL_SUBMIT=true to apply for real)", "action");
+        break;
+      }
       const before = page.url();
       await next.click();
       await page.waitForLoadState("networkidle", { timeout: 12000 }).catch(() => {});
@@ -419,8 +450,8 @@ async function execute(run: Run, opts: RunOptions) {
 
     if (realDryRun) {
       run.think("Dry run: stopped right before clicking Submit (set ALLOW_REAL_SUBMIT=true to send real applications)", "action");
-      const shot = await run.shot(page, "Ready to submit (dry run)");
-      finish(run, { url: page.url(), text: "Dry run, not submitted", screenshot: shot, dryRun: true });
+      const shot = await run.shot(page, stoppedBeforeNext ? "Stopped before the next page (dry run)" : "Ready to submit (dry run)");
+      finish(run, { url: page.url(), text: stoppedBeforeNext ? "Dry run, stopped before the next page" : "Dry run, not submitted", screenshot: shot, dryRun: true });
       return;
     }
 

@@ -22,6 +22,7 @@ export interface CompanyRef {
 type Fetcher = (c: CompanyRef) => Promise<JobInput[]>;
 
 import { ENTERPRISE_FETCHERS, enterpriseDescription } from "./enterprise.ts";
+import { SMALL_FETCHERS, smallDescription } from "./smallats.ts";
 
 // ---------- Greenhouse ----------
 interface GhJob {
@@ -308,15 +309,23 @@ interface WorkableJob {
   workplace?: string;
 }
 const workable: Fetcher = async (c) => {
-  const res = await fetch(`https://apply.workable.com/api/v3/accounts/${c.board}/jobs`, {
-    method: "POST",
-    headers: { "User-Agent": UA, Accept: "application/json", "Content-Type": "application/json" },
-    body: JSON.stringify({ query: "", location: [], department: [], worktype: [], remote: [] }),
-    signal: AbortSignal.timeout(20000),
-  });
-  if (!res.ok) throw new Error(`${res.status} for workable ${c.board}`);
-  const d = (await res.json()) as { results?: WorkableJob[] };
-  return (d.results ?? []).map((j) => {
+  // Ten jobs a page; nextPage is the token for the following one.
+  const all: WorkableJob[] = [];
+  let token: string | undefined;
+  for (let page = 0; page < 30; page++) {
+    const res = await fetch(`https://apply.workable.com/api/v3/accounts/${c.board}/jobs`, {
+      method: "POST",
+      headers: { "User-Agent": UA, Accept: "application/json", "Content-Type": "application/json" },
+      body: JSON.stringify({ query: "", location: [], department: [], worktype: [], remote: [], ...(token ? { token } : {}) }),
+      signal: AbortSignal.timeout(20000),
+    });
+    if (!res.ok) throw new Error(`${res.status} for workable ${c.board}`);
+    const d = (await res.json()) as { results?: WorkableJob[]; nextPage?: string };
+    all.push(...(d.results ?? []));
+    if (!d.nextPage || !d.results?.length) break;
+    token = d.nextPage;
+  }
+  return all.map((j) => {
     const location = [j.location?.city, j.location?.region, j.location?.country].filter(Boolean).join(", ");
     const url = `https://apply.workable.com/${c.board}/j/${j.shortcode}/`;
     return {
@@ -344,12 +353,14 @@ async function workableDescription(externalId: string): Promise<string> {
   return htmlToText(`${d.description ?? ""}\n${d.requirements ?? ""}\n${d.benefits ?? ""}`);
 }
 
-export const FETCHERS: Record<string, Fetcher> = { greenhouse, lever, ashby, smartrecruiters, recruitee, workday, workable, ...ENTERPRISE_FETCHERS };
+export const FETCHERS: Record<string, Fetcher> = { greenhouse, lever, ashby, smartrecruiters, recruitee, workday, workable, ...ENTERPRISE_FETCHERS, ...SMALL_FETCHERS };
 
 /** Sources whose list APIs omit descriptions; fetched on demand (opening, scoring, applying). */
 export async function fetchDescription(ats: string, externalId: string, url?: string): Promise<string> {
   const enterprise = await enterpriseDescription(ats, externalId, url);
   if (enterprise != null) return enterprise;
+  const small = await smallDescription(ats, externalId);
+  if (small != null) return small;
   if (ats === "smartrecruiters") {
     const [board, id] = externalId.split(":");
     return smartrecruitersDescription(board, id);

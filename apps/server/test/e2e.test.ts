@@ -176,6 +176,20 @@ test("real-employer safety: fills everything, stops before Submit, sends nothing
   assert.equal((await call("GET", "/wallet")).credits, before, "dry runs are free");
 });
 
+test("real-employer safety, multi-step: a dry run never clicks Next, which would send the page to the employer", async () => {
+  const job = await call("POST", "/jobs/fetch", { url: `http://localhost:${PORT}/demo-careers/wizard/jobs/2001` });
+  const created = await call("POST", "/applications", { jobId: job.id });
+  let a = await waitFor(created.id, ["NEEDS_INPUT", "PENDING_SUBMIT_REVIEW", "FAILED"]);
+  const missing = a.fields.filter((f: any) => f.required && (f.value == null || f.value === ""));
+  await call("POST", `/applications/${a.id}/approve`, { fields: missing.map((f: any) => ({ id: f.id, value: "Answer" })) });
+  a = await waitFor(a.id, ["COMPLETED", "FAILED"]);
+  assert.equal(a.status, "COMPLETED", a.error);
+  assert.equal(a.confirmation.dryRun, true);
+  assert.match(a.confirmation.text, /stopped before the next page/);
+  assert.equal(a.totalPages, 1);
+  assert.ok(a.trace.some((t: any) => /stopped before Next/.test(t.text ?? t.thought ?? "")), "the trace says why");
+});
+
 test("Workday-style tenant: creates an account with your application password, verifies by emailed code, applies, then reuses it", async () => {
   const { workdaySubmissions } = await import("../src/mock/workday.ts");
   // Your own password for job-site accounts; weak ones are refused.

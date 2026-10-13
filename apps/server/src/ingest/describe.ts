@@ -4,10 +4,13 @@ import type { Job } from "../types.ts";
 import { extractSalary } from "./sources.ts";
 import { fetchDescription } from "./sources.ts";
 import { sponsorshipSignal } from "../util/text.ts";
+import { SMALL_LAZY } from "./smallats.ts";
+
+const LAZY = ["smartrecruiters", "workday", "workable", "oraclecloud", "icims", "taleo", "successfactors"];
 
 /** Make sure a job has its description (some ATS list APIs omit it). Returns the up-to-date job. */
 export async function ensureDescription(job: Job): Promise<Job> {
-  if (job.description || !["smartrecruiters", "workday", "workable", "oraclecloud", "icims", "taleo", "successfactors"].includes(job.ats)) return job;
+  if (job.description || ![...LAZY, ...SMALL_LAZY].includes(job.ats)) return job;
   const d = await fetchDescription(job.ats, job.externalId, job.url).catch(() => "");
   if (!d) return job;
   run("UPDATE jobs SET description = ?, salary = COALESCE(salary, ?), sponsors_visa = COALESCE(sponsors_visa, ?) WHERE id = ?", d, extractSalary(d) ?? null, (() => {

@@ -104,6 +104,7 @@ test("extension fills a plain application form in your tab and never submits", a
   assert.equal(await p.inputValue("#first_name"), "Alex");
   assert.match(await p.inputValue("#email"), /@/);
   assert.ok((await p.evaluate(() => (document.querySelector("#resume") as HTMLInputElement).files?.[0]?.size ?? 0)) > 1000, "tailored résumé attached");
+  assert.equal(await p.inputValue("#company_website_url"), "", "the off-screen bot trap stays empty");
   assert.ok(!p.url().includes("confirmation"), "nothing submitted");
   const subs = await (await fetch(`${BASE}/mock-ats/submissions`)).json();
   assert.equal(subs.length, 0);

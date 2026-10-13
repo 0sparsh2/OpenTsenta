@@ -211,6 +211,8 @@ export interface Profile {
     visaStatus?: string;
     /** ISO country of citizenship (passport), for export-control and passport questions. */
     citizenship?: string;
+    /** Active U.S. security clearance: "None", "Public Trust", "Secret", "Top Secret", "TS/SCI", "TS/SCI with polygraph". */
+    clearance?: string;
   };
   eeo: { gender?: string; race?: string; veteran?: string; disability?: string; hispanic?: string };
   preferences: {
