@@ -49,6 +49,11 @@ export default function Login() {
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
     setErr("");
+    // Local mode has no password box, so a password typed (or autofilled) into "Full name" would become your name.
+    if (name.trim() && !/^[\p{L}][\p{L}\p{M}'’.\- ]{0,79}$/u.test(name.trim())) {
+      setErr(dev ? "That looks like a password, not a name. Local mode doesn't use a password: enter your name or leave it blank." : "Enter your name as you'd like it on applications (letters, spaces, hyphens).");
+      return;
+    }
     try {
       if (mode === "magic") {
         await magic({ email }).unwrap();

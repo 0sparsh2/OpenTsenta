@@ -85,6 +85,17 @@ export function getUserByToken(token: string) {
   const r = one("SELECT * FROM users WHERE token = ?", token);
   return r ? toUser(r) : undefined;
 }
+/** A person's name ("Sparsh Nagpal", "José O'Neil-Ruiz"), not something typed into the wrong box. */
+export const looksLikeName = (s: string | null | undefined) => Boolean(s && /^[\p{L}][\p{L}\p{M}'’.\- ]{0,79}$/u.test(s.trim()));
+export function setUserName(userId: string, name: string) {
+  run("UPDATE users SET name = ? WHERE id = ?", name, userId);
+}
+/** The name to greet someone by: their profile's name, else the account name if it's a real name. */
+export function displayName(u: User) {
+  const full = [u.profile.personal.firstName, u.profile.personal.lastName].filter(Boolean).join(" ").trim();
+  return full || (looksLikeName(u.name) ? u.name : "");
+}
+
 export function getUserByEmail(email: string) {
   const r = one("SELECT * FROM users WHERE email = ?", email.toLowerCase());
   return r ? toUser(r) : undefined;

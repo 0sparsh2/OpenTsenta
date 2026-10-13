@@ -41,6 +41,7 @@ import {
   toJob,
   updateProfile,
   updateSettings,
+  displayName,
   type Application,
   type User,
 } from "./store.ts";
@@ -200,7 +201,7 @@ const publicUser = (u: User) => ({
   email: u.email,
   emailVerified: u.emailVerified,
   hasPassword: u.hasPassword,
-  name: u.name,
+  name: displayName(u),
   plan: u.plan,
   credits: u.credits,
   onboarded: u.onboarded,

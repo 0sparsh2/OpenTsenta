@@ -8,7 +8,7 @@ import { enqueue } from "../apply/queue.ts";
 import { BUILTINS, writeAnswers } from "../apply/library.ts";
 import { buildDocx } from "../resume/docx.ts";
 import { normalizeDoc, resolveLayout } from "../resume/model.ts";
-import { fileToText, parseResume } from "../resume/parse.ts";
+import { detectFont, fileToText, parseResume } from "../resume/parse.ts";
 import { duplicateProfile, profileFor, suggestProfileName, suggestTargets } from "../resume/profiles.ts";
 import { projectDocx } from "../resume/project.ts";
 import { fitResume, fontFilePath, FONTS, previewResume, renderResume, TEMPLATES } from "../resume/render.ts";
@@ -25,6 +25,8 @@ import {
   saveResume,
   setDefaultResume,
   updateProfile,
+  looksLikeName,
+  setUserName,
   type Application,
   type Resume,
   type User,
@@ -118,6 +120,12 @@ resumes.post("/resumes", async (c) => {
   if (!text.trim()) return bad(c, "Upload a PDF, DOCX, or TXT résumé (or paste text)");
   const parsed = await parseResume(text);
   const doc = normalizeDoc(parsed.doc);
+  // Keep the typeface the résumé was set in: it decides how much fits on a page.
+  const font = filePath && fileName ? await detectFont(filePath, fileName) : undefined;
+  if (font) {
+    const layout = resolveLayout(doc);
+    doc.layout = { ...layout, style: { ...layout.style, font } };
+  }
   const name = (typeof body.name === "string" && body.name.trim()) || suggestProfileName(doc);
   const resume = saveResume({ userId: u.id, name, filePath, fileName, text, doc, isDefault: false, targets: suggestTargets(doc, name), origin: "import" });
 
@@ -137,6 +145,9 @@ resumes.post("/resumes", async (c) => {
   };
   if (!p.preferences.titles.length && doc.experience[0]?.title) p.preferences.titles = [doc.experience[0].title];
   updateProfile(u.id, p);
+  // An empty account name, or one that isn't a name (a password typed into the wrong box): use the résumé's.
+  const full = [p.personal.firstName, p.personal.lastName].filter(Boolean).join(" ");
+  if (full && !looksLikeName(u.name)) setUserName(u.id, full);
   return c.json({ resume: profileView(resume), profile: { ...resume, text: undefined }, method: parsed.method, contact: p });
 });
 

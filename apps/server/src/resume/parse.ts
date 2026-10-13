@@ -5,7 +5,8 @@ import { extractText, getDocumentProxy } from "unpdf";
 import mammoth from "mammoth";
 import { structured, withFallback } from "../llm.ts";
 import { extractSkills } from "../match/keywords.ts";
-import type { Education, Experience, Profile, Project, ResumeDoc } from "../types.ts";
+import JSZip from "jszip";
+import type { Education, Experience, Profile, Project, ResumeDoc, ResumeFont } from "../types.ts";
 import { truncate } from "../util/text.ts";
 
 const rid = () => crypto.randomBytes(4).toString("hex");
@@ -165,6 +166,55 @@ async function pdfText(buf: Buffer): Promise<string> {
     for (const c of chunks) if (c.length) out.push(...linesToText(c, !typedBullets));
   }
   return out.join("\n");
+}
+
+const FONT_MAP: [RegExp, ResumeFont][] = [
+  [/calibri|carlito/i, "calibri"],
+  [/arial|helvetica|arimo|liberation ?sans/i, "arial"],
+  [/times|tinos|liberation ?serif/i, "times"],
+  [/georgia|gelasio/i, "georgia"],
+  [/garamond/i, "garamond"],
+];
+const fontOf = (name?: string | null) => (name ? FONT_MAP.find(([re]) => re.test(name))?.[1] : undefined);
+
+/** The typeface most of an uploaded résumé is set in, when Ferry has it (Calibri, Arial, Times, Georgia, Garamond). */
+export async function detectFont(filePath: string, fileName: string): Promise<ResumeFont | undefined> {
+  const lower = fileName.toLowerCase();
+  try {
+    if (lower.endsWith(".pdf")) {
+      const pdf = await getDocumentProxy(new Uint8Array(fs.readFileSync(filePath)));
+      const tally = new Map<ResumeFont, number>();
+      for (let n = 1; n <= Math.min(pdf.numPages, 2); n++) {
+        const page = await pdf.getPage(n);
+        await page.getOperatorList(); // loads the fonts, so their real names are known
+        const content = await page.getTextContent();
+        for (const it of content.items as { str?: string; fontName?: string }[]) {
+          if (!it.str?.trim() || !it.fontName) continue;
+          let name: string | undefined;
+          try {
+            name = (page.commonObjs.get(it.fontName) as { name?: string } | undefined)?.name;
+          } catch {
+            /* font not loaded */
+          }
+          const f = fontOf(name);
+          if (f) tally.set(f, (tally.get(f) ?? 0) + it.str.length);
+        }
+      }
+      return [...tally.entries()].sort((a, b) => b[1] - a[1])[0]?.[0];
+    }
+    if (lower.endsWith(".docx")) {
+      const zip = await JSZip.loadAsync(fs.readFileSync(filePath));
+      const doc = (await zip.file("word/document.xml")?.async("string")) ?? "";
+      const styles = (await zip.file("word/styles.xml")?.async("string")) ?? "";
+      const counts = new Map<string, number>();
+      for (const m of doc.matchAll(/<w:rFonts [^>]*w:ascii="([^"]+)"/g)) counts.set(m[1], (counts.get(m[1]) ?? 0) + 1);
+      const named = [...counts.entries()].sort((a, b) => b[1] - a[1])[0]?.[0] ?? styles.match(/<w:docDefaults>[\s\S]*?w:ascii="([^"]+)"/)?.[1];
+      return fontOf(named);
+    }
+  } catch {
+    /* unreadable: keep the template's font */
+  }
+  return undefined;
 }
 
 function htmlToText(html: string) {

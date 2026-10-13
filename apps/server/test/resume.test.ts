@@ -122,7 +122,16 @@ test("layout: templates, section order, hidden sections and links, and the page 
   assert.ok(!prev.html.includes("555-0142"), "hidden phone link");
   assert.ok(prev.html.includes("/resume-fonts/"), "preview links fonts");
 
-  // A résumé three times too long: tightened, then the least relevant bullets cut, but still one page.
+  // Content first: a résumé about half a page too long fits by tightening spacing and type, with nothing cut.
+  const longer = structuredClone(doc);
+  for (const k of [2, 3]) longer.experience.push(...doc.experience.map((e: any) => ({ ...e, id: `${e.id}x${k}`, company: `${e.company} ${k}` })));
+  longer.layout = { style: { template: "classic", pageLimit: 1, trimToFit: true } };
+  const snug = await fitResume(personal, longer, undefined, {});
+  assert.equal(snug.pages, 1);
+  assert.equal(snug.cut.length, 0, "nothing cut while a tighter layout still fits");
+  assert.ok(snug.step > 0, "it was tightened");
+
+  // A résumé three times too long: tightened all the way, then the least relevant bullets cut, still one page.
   const long = structuredClone(doc);
   for (let k = 0; k < 3; k++) long.experience.push(...doc.experience.map((e: any) => ({ ...e, id: `${e.id}${k}`, company: `${e.company} ${k}`, bullets: [...e.bullets, ...e.bullets] })));
   long.layout = { style: { template: "classic", pageLimit: 1, trimToFit: true } };
@@ -130,7 +139,7 @@ test("layout: templates, section order, hidden sections and links, and the page 
   assert.equal(fit.pages, 1);
   assert.equal(fit.overflow, false);
   assert.ok(fit.cut.length > 0);
-  assert.ok(fit.vars.fontSize >= 9.5, `kept a readable size (${fit.vars.fontSize})`);
+  assert.ok(fit.vars.fontSize >= 9, `never below 9pt (${fit.vars.fontSize})`);
   assert.ok(!fit.cut.some((id: string) => id === `exp:${doc.experience[0].id}:0` || id === `exp:${doc.experience[0].id}:1`), "never cuts the latest role's lead bullets");
   const out = await renderResume(personal, long, "long_test", { keywords: ["kubernetes", "go"] });
   assert.equal(await pdfPages(fs.readFileSync(out.file)), 1);

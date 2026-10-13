@@ -77,6 +77,8 @@ export interface FitResult {
 const MIN_FONT = 9;
 
 /** The compaction ladder: step n applies every reduction up to n. Spacing first, then leading, margins, then type. */
+/** Spacing steps before the type gets smaller: section gaps, entry gaps, line height, then margins. */
+const SPACING_STEPS = 9;
 export function varsAt(layout: ResumeLayout, step: number): FitVars {
   const t = TEMPLATES[layout.style.template];
   const v: FitVars = { fontSize: layout.style.fontSize, lineHeight: t.spacing.lineHeight, section: t.spacing.section, entry: t.spacing.entry, bullet: t.spacing.bullet, margins: [...t.margins] };
@@ -88,12 +90,19 @@ export function varsAt(layout: ResumeLayout, step: number): FitVars {
   if (step >= 6) v.lineHeight = Math.min(v.lineHeight, 1.15);
   if (step >= 7) (v.margins[0] = Math.min(v.margins[0], 0.3)), (v.margins[2] = Math.min(v.margins[2], 0.3));
   if (step >= 8) (v.margins[1] = Math.min(v.margins[1], 0.45)), (v.margins[3] = Math.min(v.margins[3], 0.45)), (v.section = Math.min(v.section, 5));
-  if (step >= 9) v.fontSize = Math.max(Math.min(MIN_FONT, v.fontSize), v.fontSize - (step - 8) * 0.25);
+  // Margins most one-page résumés use when they're full: about a third of an inch.
+  if (step >= 9) (v.margins[0] = Math.min(v.margins[0], 0.25)), (v.margins[2] = Math.min(v.margins[2], 0.25)), (v.margins[1] = Math.min(v.margins[1], 0.35)), (v.margins[3] = Math.min(v.margins[3], 0.35));
+  const fontSteps = fontStepsOf(layout);
+  if (step > SPACING_STEPS) v.fontSize = Math.max(MIN_FONT, v.fontSize - Math.min(step - SPACING_STEPS, fontSteps) * 0.25);
+  // Last resorts before anything is cut, one at a time: wider text, then tighter lines, then tighter gaps.
+  const extra = step - SPACING_STEPS - fontSteps;
+  if (extra >= 1) (v.margins[1] = Math.min(v.margins[1], 0.3)), (v.margins[3] = Math.min(v.margins[3], 0.3));
+  if (extra >= 2) (v.lineHeight = Math.min(v.lineHeight, 1.12)), (v.bullet = 0);
+  if (extra >= 3) (v.lineHeight = Math.min(v.lineHeight, 1.1)), (v.section = Math.min(v.section, 4)), (v.entry = Math.min(v.entry, 2));
   return v;
 }
-export const maxStep = (layout: ResumeLayout) => 8 + Math.max(0, Math.ceil((layout.style.fontSize - MIN_FONT) / 0.25));
-/** All spacing reductions plus at most half a point off the type. */
-export const comfortStep = (layout: ResumeLayout) => Math.min(maxStep(layout), 10);
+const fontStepsOf = (layout: ResumeLayout) => Math.max(0, Math.ceil((layout.style.fontSize - MIN_FONT) / 0.25));
+export const maxStep = (layout: ResumeLayout) => SPACING_STEPS + fontStepsOf(layout) + 3;
 
 // ---------- fonts ----------
 
@@ -327,7 +336,6 @@ interface FitInput {
   limit: number;
   trim: boolean;
   /** With trimming on, shrink only this far before cutting content; smaller type comes after. */
-  comfort: number;
 }
 
 /** Runs inside Chromium: walk the ladder to a readable floor, cut by rank, shrink further only if needed, then relax back. */
@@ -356,11 +364,11 @@ function fitInPage(input: FitInput) {
     apply(to);
     return -1;
   };
-  const ceiling = input.trim ? Math.min(input.comfort, last) : last;
-  let step = walk(0, ceiling);
+  // Content first: shrink all the way before cutting anything (cuts only when even the tightest layout overflows).
+  let step = walk(0, last);
   const cut: string[] = [];
   if (step < 0) {
-    step = ceiling;
+    step = last;
     if (input.trim) {
       const candidates = [...document.querySelectorAll<HTMLElement>("[data-cut]")].sort((a, b) => Number(a.dataset.rank) - Number(b.dataset.rank));
       for (const el of candidates) {
@@ -369,10 +377,6 @@ function fitInPage(input: FitInput) {
         el.style.display = "none";
         el.dataset.gone = "1";
         cut.push(el.dataset.cut!);
-      }
-      if (!fits(step) && ceiling < last) {
-        const s = walk(ceiling + 1, last);
-        step = s < 0 ? last : s;
       }
       // The last cut may have freed more room than needed: give back spacing while it still fits.
       while (step > 0 && fits(step)) {
@@ -415,7 +419,7 @@ export async function fitResume(p: Profile["personal"], doc: ResumeDoc, layoutIn
       await page.evaluate(() => document.fonts.ready);
       // tsx compiles named inner functions with a __name helper that doesn't exist in the page.
       await page.evaluate("globalThis.__name = globalThis.__name || ((t) => t)");
-      const r = await page.evaluate(fitInPage, { ladder, limit, trim: layout.style.trimToFit, comfort: comfortStep(layout) });
+      const r = await page.evaluate(fitInPage, { ladder, limit, trim: layout.style.trimToFit });
       result = { step: r.step, vars: ladder[r.step].vars, cut: r.cut, pages: r.pages, limit, overflow: r.overflow };
     }
     // Ground truth: count pages in the PDF Chromium actually prints; tighten further if the estimate was optimistic.
