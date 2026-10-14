@@ -72,7 +72,10 @@ async function pollCompany(c: CompanyRow): Promise<{ fresh: string[]; firstTime:
     // Back off: 2×, 4×, 8×… the usual interval, at most two days.
     const fails = (c.fail_count ?? 0) + 1;
     const wait = Math.min(2880, intervalMin(c) * 2 ** fails);
-    run("UPDATE companies SET last_polled_at = ?, last_error = ?, fail_count = ?, next_poll_at = ? WHERE id = ?", now(), String((e as Error).message).slice(0, 300), fails, at(wait), c.id);
+    const msg = String((e as Error).message).slice(0, 300);
+    // A board that's gone (404 three polls running) is retired, not retried forever; Settings → Career pages can revive it.
+    const gone = /^(404|410)\b/.test(msg) && fails >= 3;
+    run("UPDATE companies SET last_polled_at = ?, last_error = ?, fail_count = ?, next_poll_at = ?, active = ? WHERE id = ?", now(), gone ? `Retired: ${msg}` : msg, fails, at(wait), gone ? 0 : 1, c.id);
     return { fresh: [], firstTime };
   }
 }

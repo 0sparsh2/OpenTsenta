@@ -1,3 +1,4 @@
+import { config } from "../config.ts";
 import { classifyWorkplace, htmlToText, sponsorshipSignal } from "../util/text.ts";
 import type { JobInput } from "../store.ts";
 
@@ -241,7 +242,7 @@ interface WdPosting {
   postedOn?: string;
   remoteType?: string;
 }
-const WORKDAY_MAX = Number(process.env.WORKDAY_MAX_JOBS ?? 300);
+const WORKDAY_MAX = Number(process.env.WORKDAY_MAX_JOBS ?? 1000);
 
 export function workdayParts(board: string) {
   const [host, site] = board.split("|");
@@ -260,6 +261,9 @@ export function workdayPostedOn(s?: string): string | undefined {
 const workday: Fetcher = async (c) => {
   const { host, site, tenant } = workdayParts(c.board);
   const out: JobInput[] = [];
+  // Workday lists newest first and reports the total on the first page only.
+  const cutoff = new Date(Date.now() - config.jobRetentionDays * 86400_000).toISOString();
+  let total = 0;
   for (let offset = 0; offset < WORKDAY_MAX; offset += 20) {
     const res = await fetch(`https://${host}/wday/cxs/${tenant}/${site}/jobs`, {
       method: "POST",
@@ -286,7 +290,10 @@ const workday: Fetcher = async (c) => {
         sponsorsVisa: null,
       });
     }
-    if (!d.jobPostings?.length || offset + 20 >= (d.total ?? 0)) break;
+    if (offset === 0) total = d.total ?? 0;
+    // Once a page reaches postings older than the retention window, every later page is older still.
+    const oldest = workdayPostedOn(d.jobPostings?.at(-1)?.postedOn);
+    if (!d.jobPostings?.length || offset + 20 >= total || (oldest && oldest < cutoff)) break;
   }
   return out;
 };
@@ -309,11 +316,61 @@ interface WorkableJob {
   type?: string;
   workplace?: string;
 }
+interface WorkableWidgetJob {
+  title?: string;
+  shortcode: string;
+  employment_type?: string;
+  telecommuting?: boolean;
+  department?: string;
+  published_on?: string;
+  created_at?: string;
+  city?: string;
+  state?: string;
+  country?: string;
+  locations?: { city?: string; region?: string; country?: string; hidden?: boolean }[];
+}
+
+/** Workable's careers-widget feed: a whole board in one request (its search API pages 10 at a time and rate-limits). */
+async function workableWidget(c: CompanyRef): Promise<JobInput[] | null> {
+  const res = await fetch(`https://apply.workable.com/api/v1/widget/accounts/${encodeURIComponent(c.board)}?details=false`, {
+    headers: { "User-Agent": UA, Accept: "application/json" },
+    signal: AbortSignal.timeout(45000),
+  });
+  if (res.status === 404) return null;
+  if (!res.ok) throw new Error(`${res.status} for workable ${c.board}`);
+  const d = (await res.json()) as { jobs?: WorkableWidgetJob[] };
+  if (!d.jobs) return null;
+  return d.jobs.map((j) => {
+    const places = (j.locations ?? []).filter((l) => !l.hidden).map((l) => [l.city, l.region, l.country].filter(Boolean).join(", ")).filter(Boolean);
+    const location = places.length ? [...new Set(places)].join(" / ") : [j.city, j.state, j.country].filter(Boolean).join(", ");
+    const url = `https://apply.workable.com/${c.board}/j/${j.shortcode}/`;
+    return {
+      companyId: c.id,
+      company: c.name,
+      ats: "workable",
+      externalId: `${c.board}:${j.shortcode}`,
+      title: (j.title ?? "").trim(),
+      location,
+      workplace: j.telecommuting ? "remote" : classifyWorkplace(location),
+      department: j.department || undefined,
+      employmentType: j.employment_type || undefined,
+      url,
+      applyUrl: `${url}apply/`,
+      description: "",
+      postedAt: j.published_on || j.created_at || undefined,
+      sponsorsVisa: null,
+    };
+  });
+}
+
 const workable: Fetcher = async (c) => {
-  // Ten jobs a page; nextPage is the token for the following one.
+  const viaWidget = await workableWidget(c);
+  if (viaWidget) return viaWidget;
+  // Fallback: the paged search API, gently (ten jobs a page, a pause between pages).
   const all: WorkableJob[] = [];
   let token: string | undefined;
   for (let page = 0; page < 30; page++) {
+    if (page) await new Promise((r) => setTimeout(r, 1500));
     const res = await fetch(`https://apply.workable.com/api/v3/accounts/${c.board}/jobs`, {
       method: "POST",
       headers: { "User-Agent": UA, Accept: "application/json", "Content-Type": "application/json" },
