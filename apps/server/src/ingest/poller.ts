@@ -1,7 +1,7 @@
 import { config } from "../config.ts";
-import { all, now, run, tx } from "../db.ts";
+import { all, now, one, run, tx } from "../db.ts";
 import { broadcast } from "../bus.ts";
-import { upsertJob } from "../store.ts";
+import { ingestJob, type JobInput } from "../store.ts";
 import { matchNewJobs } from "../match/score.ts";
 import { FETCHERS } from "./sources.ts";
 import { listCompanies, type CompanyRow } from "./companies.ts";
@@ -43,14 +43,23 @@ async function pollCompany(c: CompanyRow): Promise<{ fresh: string[]; firstTime:
   try {
     const jobs = (await fetchBoard(c)).filter((j) => j.title);
     const fresh: string[] = [];
-    // One transaction per board: thousands of rows commit at once instead of one disk sync per job.
+    const cutoff = new Date(Date.now() - config.jobRetentionDays * 86400_000).toISOString();
+    const seen = now();
+    // Small transactions with a pause between them: other boards' requests keep flowing (a long synchronous write
+    // starves them until their timeouts fire), and each batch still commits at once.
+    for (let i = 0; i < jobs.length; i += 200) {
+      tx(() => {
+        for (const j of jobs.slice(i, i + 200)) {
+          if (!keep(j, cutoff, seen)) continue;
+          const r = ingestJob(j);
+          if (r.isNew) fresh.push(r.id);
+        }
+      });
+      await sleep(0);
+    }
+    // Anything from this board missing from this pass has been taken down (and leaves the location counts).
+    const live = new Set(jobs.map((j) => j.externalId));
     tx(() => {
-      for (const j of jobs) {
-        const { job, isNew } = upsertJob(j);
-        if (isNew) fresh.push(job.id);
-      }
-      // Anything from this board missing from this pass has been taken down (and leaves the location counts).
-      const live = new Set(jobs.map((j) => j.externalId));
       for (const r of all<{ id: string; external_id: string }>("SELECT id, external_id FROM jobs WHERE company_id = ? AND closed_at IS NULL", c.id)) {
         if (live.has(r.external_id)) continue;
         run("UPDATE jobs SET closed_at = ? WHERE id = ?", now(), r.id);
@@ -68,14 +77,51 @@ async function pollCompany(c: CompanyRow): Promise<{ fresh: string[]; firstTime:
   }
 }
 
-/** Closed jobs nobody applied to, saved, or tracked: gone after the retention period. */
-function purgeClosedJobs(): number {
-  const r = run(
-    `DELETE FROM jobs WHERE closed_at IS NOT NULL AND closed_at < datetime('now', ?)
-     AND id NOT IN (SELECT job_id FROM applications) AND id NOT IN (SELECT job_id FROM matches WHERE status != 'new')`,
-    `-${config.closedJobRetentionDays} days`,
-  );
-  return Number(r.changes ?? 0);
+/**
+ * Recent jobs only: a job posted more than JOB_RETENTION_DAYS ago isn't stored. A job with no posting date is a
+ * "dropped" tombstone once it's been listed that long, so its board can't bring it back as new.
+ */
+export function keep(j: JobInput, cutoff: string, seen: string): boolean {
+  if (j.postedAt && j.postedAt < cutoff) return false;
+  if (one("SELECT 1 FROM job_tombstones WHERE ats = ? AND external_id = ?", j.ats, j.externalId)) {
+    run("UPDATE job_tombstones SET last_seen = ? WHERE ats = ? AND external_id = ?", seen, j.ats, j.externalId);
+    return false;
+  }
+  return true;
+}
+
+const KEEP_IF_YOURS = "id NOT IN (SELECT job_id FROM applications) AND id NOT IN (SELECT job_id FROM matches WHERE status != 'new')";
+
+/**
+ * Delete jobs past the retention period (and closed jobs after a couple of days), except ones you applied to, saved,
+ * or skipped. In batches with pauses, so the server keeps answering while a big backlog clears.
+ */
+export async function sweepOldJobs(): Promise<number> {
+  const openCutoff = new Date(Date.now() - config.jobRetentionDays * 86400_000).toISOString();
+  const seen = now();
+  let total = 0;
+  for (const [sql, args] of [
+    [`SELECT id, ats, external_id, posted_at FROM jobs WHERE closed_at IS NULL AND COALESCE(posted_at, first_seen_at) < ? AND ${KEEP_IF_YOURS} LIMIT 1000`, [openCutoff]],
+    [`SELECT id, ats, external_id, posted_at FROM jobs WHERE closed_at IS NOT NULL AND closed_at < datetime('now', ?) AND ${KEEP_IF_YOURS} LIMIT 1000`, [`-${config.closedJobRetentionDays} days`]],
+  ] as const) {
+    for (;;) {
+      const rows = all<{ id: string; ats: string; external_id: string; posted_at: string | null }>(sql, ...args);
+      if (!rows.length) break;
+      const open = sql.includes("closed_at IS NULL");
+      tx(() => {
+        for (const r of rows) {
+          // Still listed but undated: remember it, or the next poll re-adds it as new.
+          if (open && !r.posted_at) run("INSERT OR REPLACE INTO job_tombstones(ats, external_id, last_seen) VALUES(?,?,?)", r.ats, r.external_id, seen);
+          run("DELETE FROM jobs WHERE id = ?", r.id);
+        }
+      });
+      total += rows.length;
+      await sleep(10);
+    }
+  }
+  // Tombstones for jobs no board has listed in a month aren't needed.
+  run("DELETE FROM job_tombstones WHERE last_seen < ?", new Date(Date.now() - 30 * 86400_000).toISOString());
+  return total;
 }
 
 /** Poll the boards that are due (or the given ones, or all with force). */
@@ -112,11 +158,11 @@ export async function pollAll(opts: { onlyIds?: string[]; force?: boolean } = {}
       }),
     );
     const errors = all<{ n: number }>("SELECT COUNT(*) AS n FROM companies WHERE active = 1 AND last_error IS NOT NULL")[0]?.n ?? 0;
-    const purged = purgeClosedJobs();
+    const purged = await sweepOldJobs();
     invalidateLocations();
     lastRun = { at: now(), newJobs: fresh.length, companies: companies.length, errors, purged };
     broadcast({ type: "jobs:polled", newJobs: fresh.length, companies: companies.length });
-    console.log(`[poller] ${companies.length} boards due, ${fresh.length} new jobs, ${seeded.length} from newly watched boards, ${errors} boards failing, ${purged} closed jobs purged (${Math.round((Date.now() - t0) / 1000)}s)`);
+    console.log(`[poller] ${companies.length} boards due, ${fresh.length} new jobs, ${seeded.length} from newly watched boards, ${errors} boards failing, ${purged} old or closed jobs removed (${Math.round((Date.now() - t0) / 1000)}s)`);
     // On the very first poll everything is "new"; users get a full rematch on onboarding instead. After that, a newly
     // watched board's first poll brings in its whole history: score it, but don't announce it as news.
     if (!firstPoll) {

@@ -250,6 +250,10 @@ addColumn("ats_accounts", "password_kind", "TEXT NOT NULL DEFAULT 'generated'");
 // Per-board polling schedule: big paged boards less often, failing boards back off.
 addColumn("companies", "next_poll_at", "TEXT");
 addColumn("companies", "fail_count", "INTEGER NOT NULL DEFAULT 0");
+// A hash of what the board says about a job: unchanged jobs aren't rewritten on every poll.
+addColumn("jobs", "content_hash", "TEXT");
+// Jobs dropped for age that their boards still list (they have no posting date): not re-added while they stay listed.
+db.exec(`CREATE TABLE IF NOT EXISTS job_tombstones (ats TEXT NOT NULL, external_id TEXT NOT NULL, last_seen TEXT NOT NULL, PRIMARY KEY (ats, external_id));`);
 
 db.exec(`
 CREATE TABLE IF NOT EXISTS sessions (
@@ -312,7 +316,8 @@ CREATE INDEX IF NOT EXISTS job_places_facet ON job_places(key, kind, label);
 
 // Open jobs, with just what list views filter and sort on. Job rows carry whole descriptions, so scanning them
 // to find the open ones reads most of the database; this index doesn't.
-db.exec(`CREATE INDEX IF NOT EXISTS jobs_open ON jobs(first_seen_at, posted_at, workplace, sponsors_visa, company, id) WHERE closed_at IS NULL;`);
+db.exec(`CREATE INDEX IF NOT EXISTS jobs_open ON jobs(first_seen_at, posted_at, workplace, sponsors_visa, company, id) WHERE closed_at IS NULL;
+CREATE INDEX IF NOT EXISTS jobs_closed ON jobs(closed_at) WHERE closed_at IS NOT NULL;`);
 
 // Full-text index over title, company, location and description (keyword search with AND / OR / NOT / phrases).
 // External-content table kept in sync by triggers; unchanged text isn't re-indexed on every poll.

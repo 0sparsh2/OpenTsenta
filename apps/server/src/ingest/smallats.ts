@@ -15,7 +15,7 @@ export interface SmallRef {
 }
 
 async function getJson<T>(url: string): Promise<T> {
-  const res = await fetch(url, { headers: { "User-Agent": UA, Accept: "application/json" }, signal: AbortSignal.timeout(20000) });
+  const res = await fetch(url, { headers: { "User-Agent": UA, Accept: "application/json" }, signal: AbortSignal.timeout(45000) });
   if (!res.ok) throw new Error(`${res.status} for ${url}`);
   return (await res.json()) as T;
 }
@@ -203,7 +203,7 @@ async function breezyhr(c: SmallRef): Promise<JobInput[]> {
 }
 async function breezyDescription(externalId: string): Promise<string> {
   const [board, friendly] = externalId.split(":");
-  const res = await fetch(`https://${board}.breezy.hr/p/${friendly}`, { headers: { "User-Agent": UA }, signal: AbortSignal.timeout(20000) });
+  const res = await fetch(`https://${board}.breezy.hr/p/${friendly}`, { headers: { "User-Agent": UA }, signal: AbortSignal.timeout(45000) });
   if (!res.ok) throw new Error(`${res.status} for breezy ${externalId}`);
   const html = await res.text();
   for (const m of html.matchAll(/<script[^>]+application\/ld\+json[^>]*>([\s\S]*?)<\/script>/gi)) {

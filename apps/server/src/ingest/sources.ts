@@ -6,7 +6,7 @@ import type { JobInput } from "../store.ts";
 
 const UA = "Mozilla/5.0 (compatible; FerryJobWatcher/0.1; +https://github.com/)";
 
-async function getJson<T>(url: string, timeoutMs = 20000): Promise<T> {
+async function getJson<T>(url: string, timeoutMs = 45000): Promise<T> {
   const res = await fetch(url, { headers: { "User-Agent": UA, Accept: "application/json" }, signal: AbortSignal.timeout(timeoutMs) });
   if (!res.ok) throw new Error(`${res.status} ${res.statusText} for ${url}`);
   return (await res.json()) as T;
@@ -253,7 +253,8 @@ export function workdayPostedOn(s?: string): string | undefined {
   if (!s) return undefined;
   const t = s.toLowerCase();
   const d = /today/.test(t) ? 0 : /yesterday/.test(t) ? 1 : Number(t.match(/(\d+)\+?\s*days?/)?.[1] ?? NaN);
-  return Number.isFinite(d) ? new Date(Date.now() - d * 86400_000).toISOString() : undefined;
+  // To the day: "Posted 3 days ago" names a day, and a stable value lets unchanged jobs skip rewriting.
+  return Number.isFinite(d) ? `${new Date(Date.now() - d * 86400_000).toISOString().slice(0, 10)}T00:00:00.000Z` : undefined;
 }
 
 const workday: Fetcher = async (c) => {
@@ -264,7 +265,7 @@ const workday: Fetcher = async (c) => {
       method: "POST",
       headers: { "User-Agent": UA, Accept: "application/json", "Content-Type": "application/json" },
       body: JSON.stringify({ appliedFacets: {}, limit: 20, offset, searchText: "" }),
-      signal: AbortSignal.timeout(20000),
+      signal: AbortSignal.timeout(45000),
     });
     if (!res.ok) throw new Error(`${res.status} for ${host}`);
     const d = (await res.json()) as { total?: number; jobPostings?: WdPosting[] };
@@ -317,7 +318,7 @@ const workable: Fetcher = async (c) => {
       method: "POST",
       headers: { "User-Agent": UA, Accept: "application/json", "Content-Type": "application/json" },
       body: JSON.stringify({ query: "", location: [], department: [], worktype: [], remote: [], ...(token ? { token } : {}) }),
-      signal: AbortSignal.timeout(20000),
+      signal: AbortSignal.timeout(45000),
     });
     if (!res.ok) throw new Error(`${res.status} for workable ${c.board}`);
     const d = (await res.json()) as { results?: WorkableJob[]; nextPage?: string };

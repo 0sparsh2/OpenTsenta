@@ -335,6 +335,22 @@ export async function backfillJobPlaces() {
   console.log(`[places] indexed ${count} open jobs in ${Math.round((Date.now() - t0) / 1000)}s`);
 }
 
+const contentHash = (j: JobInput) =>
+  crypto
+    .createHash("sha1")
+    .update(JSON.stringify([j.title, j.company, j.location, j.workplace, j.department ?? null, j.employmentType ?? null, j.url, j.applyUrl, j.description, j.salary ?? null, j.postedAt ?? null, j.sponsorsVisa ?? null]))
+    .digest("base64url");
+
+/** The poller's upsert: a job its board describes exactly as last time isn't rewritten (most jobs, most polls). */
+export function ingestJob(j: JobInput): { id: string; isNew: boolean } {
+  const hash = contentHash(j);
+  const ex = one<{ id: string; content_hash: string | null; closed_at: string | null }>("SELECT id, content_hash, closed_at FROM jobs WHERE ats = ? AND external_id = ?", j.ats, j.externalId);
+  if (ex && ex.content_hash === hash && !ex.closed_at) return { id: ex.id, isNew: false };
+  const { job, isNew } = upsertJob(j);
+  run("UPDATE jobs SET content_hash = ? WHERE id = ?", hash, job.id);
+  return { id: job.id, isNew };
+}
+
 export function upsertJob(j: JobInput): { job: Job; isNew: boolean } {
   const existing = one<{ id: string; location: string; workplace: string; closed_at: string | null }>("SELECT id, location, workplace, closed_at FROM jobs WHERE ats = ? AND external_id = ?", j.ats, j.externalId);
   if (existing) {

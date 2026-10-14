@@ -15,7 +15,7 @@ export interface EnterpriseRef {
 }
 
 async function get(url: string, init: RequestInit = {}): Promise<Response> {
-  const res = await fetch(url, { ...init, headers: { "User-Agent": UA, "Accept-Language": "en-US", ...(init.headers ?? {}) }, signal: AbortSignal.timeout(25000) });
+  const res = await fetch(url, { ...init, headers: { "User-Agent": UA, "Accept-Language": "en-US", ...(init.headers ?? {}) }, signal: AbortSignal.timeout(45000) });
   if (!res.ok) throw new Error(`${res.status} for ${url}`);
   return res;
 }

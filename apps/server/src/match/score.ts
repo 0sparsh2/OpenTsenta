@@ -304,7 +304,7 @@ export async function matchNewJobs(jobIds: string[], opts: { quiet?: boolean } =
 
 /** Full rescore of every open job for a user (after onboarding or a profile change). */
 export async function rematchUser(user: User, llmBudget = 30) {
-  const jobs = all("SELECT * FROM jobs WHERE closed_at IS NULL ORDER BY first_seen_at DESC LIMIT 20000").map(toJob);
+  const jobs = all("SELECT * FROM jobs WHERE closed_at IS NULL ORDER BY first_seen_at DESC LIMIT 100000").map(toJob);
   run("DELETE FROM matches WHERE user_id = ? AND status = 'new'", user.id);
   return matchJobsForUser(user, jobs, { llmBudget });
 }
