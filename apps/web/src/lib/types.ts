@@ -316,6 +316,13 @@ export interface InboxMessage {
   application: ApplicationRow | null;
 }
 
+/** A place to filter jobs by (a city, metro, state, country, or remote bucket), with its count of open jobs. */
+export interface PlaceOption {
+  key: string;
+  label: string;
+  n: number;
+}
+
 export interface Company {
   id: string;
   name: string;

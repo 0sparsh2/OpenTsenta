@@ -1,5 +1,6 @@
 import crypto from "node:crypto";
-import { all, one, parse, run, uid, now, tx } from "./db.ts";
+import { all, kvGet, kvSet, one, parse, run, uid, now, tx } from "./db.ts";
+import { placesOf, PLACES_VERSION } from "./ingest/places.ts";
 import { config } from "./config.ts";
 import { defaultLibrary, withDefaults } from "./apply/library-defaults.ts";
 import {
@@ -301,9 +302,44 @@ export function getJob(id: string) {
 export type JobInput = Omit<Job, "id" | "firstSeenAt">;
 
 /** Insert or refresh a job. Returns the job and whether it was new. */
+/** Where a job is, as filterable places (see ingest/places.ts). */
+export function indexJobPlaces(jobId: string, location: string, workplace: string) {
+  run("DELETE FROM job_places WHERE job_id = ?", jobId);
+  for (const p of placesOf(location, workplace)) run("INSERT OR IGNORE INTO job_places(job_id, kind, key, label) VALUES(?,?,?,?)", jobId, p.kind, p.key, p.label);
+}
+
+/**
+ * Re-derive every open job's places when the location parser changes (and the first time). Runs in small batches
+ * that yield between them, so the server keeps answering while hundreds of thousands of jobs are indexed.
+ */
+export async function backfillJobPlaces() {
+  if (kvGet<number>("places_version", 0) === PLACES_VERSION) return;
+  const t0 = Date.now();
+  run("DELETE FROM job_places");
+  let last = 0;
+  let count = 0;
+  for (;;) {
+    const rows = all<{ rid: number; id: string; location: string; workplace: string }>(
+      "SELECT rowid AS rid, id, location, workplace FROM jobs WHERE closed_at IS NULL AND rowid > ? ORDER BY rowid LIMIT 2000",
+      last,
+    );
+    if (!rows.length) break;
+    tx(() => {
+      for (const r of rows) for (const p of placesOf(r.location, r.workplace)) run("INSERT OR IGNORE INTO job_places(job_id, kind, key, label) VALUES(?,?,?,?)", r.id, p.kind, p.key, p.label);
+    });
+    last = rows[rows.length - 1].rid;
+    count += rows.length;
+    await new Promise((r) => setTimeout(r, 5));
+  }
+  kvSet("places_version", PLACES_VERSION);
+  console.log(`[places] indexed ${count} open jobs in ${Math.round((Date.now() - t0) / 1000)}s`);
+}
+
 export function upsertJob(j: JobInput): { job: Job; isNew: boolean } {
-  const existing = one<{ id: string }>("SELECT id FROM jobs WHERE ats = ? AND external_id = ?", j.ats, j.externalId);
+  const existing = one<{ id: string; location: string; workplace: string; closed_at: string | null }>("SELECT id, location, workplace, closed_at FROM jobs WHERE ats = ? AND external_id = ?", j.ats, j.externalId);
   if (existing) {
+    // Places are kept for open jobs only: a reopened job, or a moved one, is indexed again.
+    if (existing.closed_at || existing.location !== j.location || existing.workplace !== j.workplace) indexJobPlaces(existing.id, j.location, j.workplace);
     run(
       `UPDATE jobs SET title=?, location=?, workplace=?, department=?, employment_type=?, url=?, apply_url=?,
        description=CASE WHEN length(?) > 0 THEN ? ELSE description END, salary=?, posted_at=COALESCE(?, posted_at), closed_at=NULL,
@@ -347,6 +383,7 @@ export function upsertJob(j: JobInput): { job: Job; isNew: boolean } {
     j.sponsorsVisa == null ? null : j.sponsorsVisa ? 1 : 0,
     now(),
   );
+  indexJobPlaces(id, j.location, j.workplace);
   return { job: getJob(id)!, isNew: true };
 }
 

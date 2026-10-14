@@ -76,6 +76,15 @@ export function parseJobUrl(raw: string): { ats: string; board?: string; jobId?:
     const site = jobIdx > 0 ? segs[jobIdx - 1] : segs[0];
     return { ats, board: site ? `${url.host}|${site}` : undefined, jobId: jobIdx >= 0 ? `/${segs.slice(jobIdx).join("/")}` : undefined };
   }
+  const sub = url.hostname.split(".")[0];
+  if (ats === "rippling") return { ats, board: parts[0] && /^[a-z]{2}-[A-Z]{2}$/.test(parts[0]) ? parts[1] : parts[0], jobId: parts[parts.indexOf("jobs") + 1] };
+  if (ats === "bamboohr" || ats === "pinpoint" || ats === "breezyhr" || ats === "recruitee") return { ats, board: sub };
+  if (ats === "icims") return { ats, board: url.hostname };
+  if (ats === "oraclecloud") {
+    // https://{host}/hcmUI/CandidateExperience/{lang}/sites/{site}/job/{id}
+    const i = parts.indexOf("sites");
+    return { ats, board: i >= 0 && parts[i + 1] ? `${url.hostname}|${parts[i + 1]}` : undefined };
+  }
   if (ats === "workable") {
     // https://apply.workable.com/{account}/j/{shortcode}/
     const j = parts.indexOf("j");

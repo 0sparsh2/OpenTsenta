@@ -244,7 +244,7 @@ const hooks: MatchedHook[] = [];
 export const onMatched = (fn: MatchedHook) => hooks.push(fn);
 
 /** Score jobs for one user against each of their profiles. Heuristic for all, then an LLM pass on the most promising. */
-export async function matchJobsForUser(user: User, jobs: Job[], opts: { llmBudget?: number; minStore?: number } = {}) {
+export async function matchJobsForUser(user: User, jobs: Job[], opts: { llmBudget?: number; minStore?: number; quiet?: boolean } = {}) {
   const profiles = listResumes(user.id);
   if (!profiles.length) return [];
   const views = profiles.map((p) => ({ p, u: profileUser(user, p) }));
@@ -282,19 +282,23 @@ export async function matchJobsForUser(user: User, jobs: Job[], opts: { llmBudge
   const kept = scored.filter((s) => s.m.score >= minStore);
   for (const s of kept) {
     saveMatch(user.id, s.job.id, s.m);
-    for (const h of hooks) h(user, s.job, s.m);
+    if (!opts.quiet) for (const h of hooks) h(user, s.job, s.m);
   }
   return kept.sort((a, b) => b.m.score - a.m.score);
 }
 
 /** Called after a discovery poll with newly seen job ids. */
-export async function matchNewJobs(jobIds: string[]) {
+/** quiet: score and save, but don't alert (a newly watched board's existing jobs aren't news). */
+export async function matchNewJobs(jobIds: string[], opts: { quiet?: boolean } = {}) {
   if (!jobIds.length) return;
-  const placeholders = jobIds.map(() => "?").join(",");
-  const jobs = all(`SELECT * FROM jobs WHERE id IN (${placeholders})`, ...jobIds).map(toJob);
+  const jobs: Job[] = [];
+  for (let i = 0; i < jobIds.length; i += 500) {
+    const ids = jobIds.slice(i, i + 500);
+    jobs.push(...all(`SELECT * FROM jobs WHERE id IN (${ids.map(() => "?").join(",")})`, ...ids).map(toJob));
+  }
   for (const user of listUsers()) {
     if (!getDefaultResume(user.id)) continue;
-    await matchJobsForUser(user, jobs);
+    await matchJobsForUser(user, jobs, { quiet: opts.quiet });
   }
 }
 

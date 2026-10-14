@@ -24,6 +24,8 @@ export interface CompanyRow {
   last_polled_at: string | null;
   last_error: string | null;
   job_count: number;
+  next_poll_at: string | null;
+  fail_count: number;
 }
 
 export const listCompanies = () => all<CompanyRow>("SELECT * FROM companies ORDER BY name");

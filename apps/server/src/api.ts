@@ -10,6 +10,9 @@ import { all, one, parse, run, uid } from "./db.ts";
 import { addCompany, listCompanies } from "./ingest/companies.ts";
 import { resolveJob } from "./ingest/jd.ts";
 import { pollAll, pollerStatus } from "./ingest/poller.ts";
+import { FETCHERS } from "./ingest/sources.ts";
+import { compileQuery, describeQuery } from "./match/query.ts";
+import { locationSuggestions } from "./ingest/locations.ts";
 import { ensureDescription } from "./ingest/describe.ts";
 import { llmEnabled } from "./llm.ts";
 import { matchJobsForUser, rematchUser, saveMatch } from "./match/score.ts";
@@ -341,12 +344,26 @@ api.get("/jobs/recommendations", (c) => {
 api.get("/jobs/search", (c) => {
   const u = c.get("user");
   const q = (c.req.query("q") ?? "").trim();
+  const scope = c.req.query("in") === "all" ? "all" : "title";
   const where: string[] = ["j.closed_at IS NULL"];
-  const params: unknown[] = [u.id];
-  // Every word must appear in the title, company, or location ("staff engineer remote").
-  for (const term of q.split(/\s+/).filter(Boolean).slice(0, 8)) {
-    where.push("(j.title LIKE ? OR j.company LIKE ? OR j.location LIKE ?)");
-    params.push(`%${term}%`, `%${term}%`, `%${term}%`);
+  const params: unknown[] = [];
+  // Keywords: AND by default, OR, "phrases", -exclusions, (groups), prefix*. See match/query.ts.
+  const query = compileQuery(q, scope);
+  let hits = "";
+  const hitParams: unknown[] = [];
+  if (query.include) {
+    hits = "JOIN (SELECT rowid AS rid, bm25(jobs_fts, 10.0, 4.0, 0.0, 1.0) AS rank FROM jobs_fts WHERE jobs_fts MATCH ?) h ON h.rid = j.rowid";
+    hitParams.push(query.include);
+  }
+  if (query.exclude) {
+    where.push("j.rowid NOT IN (SELECT rowid FROM jobs_fts WHERE jobs_fts MATCH ?)");
+    params.push(query.exclude);
+  }
+  // Places: any of the picked cities, metros, states, countries, or remote buckets.
+  const places = (c.req.query("places") ?? "").split(",").map((s) => s.trim()).filter(Boolean).slice(0, 30);
+  if (places.length) {
+    where.push(`j.id IN (SELECT job_id FROM job_places WHERE key IN (${places.map(() => "?").join(",")}))`);
+    params.push(...places);
   }
   const workplace = c.req.query("workplace");
   if (workplace && workplace !== "any") {
@@ -364,20 +381,61 @@ api.get("/jobs/search", (c) => {
     params.push(`-${posted} days`);
   }
   if (c.req.query("sponsors") === "1") where.push("j.sponsors_visa = 1");
+  // "For you": matched above a minimum fit, not skipped or applied to (the same filters apply).
+  const forYou = c.req.query("forYou") === "1";
+  if (forYou) {
+    where.push("m.status = 'new' AND m.score >= ?", "NOT EXISTS (SELECT 1 FROM applications a2 WHERE a2.user_id = m.user_id AND a2.job_id = m.job_id)");
+    params.push(Number(c.req.query("minScore") ?? 0));
+  }
   const limit = Math.min(400, Number(c.req.query("limit") ?? 40));
   const offset = Number(c.req.query("offset") ?? 0);
-  const sort = c.req.query("sort") === "match" ? "COALESCE(m.score, -1) DESC" : "COALESCE(j.posted_at, j.first_seen_at) DESC";
-  const rows = all(
-    `SELECT j.*, m.score, m.verdict, m.reasons, m.gaps, m.method, m.status, m.profile_id, a.id AS app_id, a.status AS app_status FROM jobs j
-     LEFT JOIN matches m ON m.job_id = j.id AND m.user_id = ?1
-     LEFT JOIN applications a ON a.job_id = j.id AND a.user_id = ?1
+  const sortBy = c.req.query("sort");
+  const sort =
+    sortBy === "relevance" && hits ? "h.rank ASC" : sortBy === "newest" ? "COALESCE(j.posted_at, j.first_seen_at) DESC" : sortBy === "match" || !sortBy ? "COALESCE(m.score, -1) DESC, COALESCE(j.posted_at, j.first_seen_at) DESC" : "COALESCE(j.posted_at, j.first_seen_at) DESC";
+  // The page's job ids first (from the open-jobs index), then the full rows for just those.
+  const ids = all<{ id: string }>(
+    `SELECT j.id FROM jobs j ${hits}
+     LEFT JOIN matches m ON m.job_id = j.id AND m.user_id = ?
      WHERE ${where.join(" AND ")} ORDER BY ${sort} LIMIT ? OFFSET ?`,
+    ...hitParams,
+    u.id,
     ...params,
     limit,
     offset,
+  ).map((r) => r.id);
+  const byId = new Map(
+    (ids.length
+      ? all<Record<string, unknown>>(
+          `SELECT j.*, m.score, m.verdict, m.reasons, m.gaps, m.method, m.status, m.profile_id, a.id AS app_id, a.status AS app_status FROM jobs j
+           LEFT JOIN matches m ON m.job_id = j.id AND m.user_id = ?
+           LEFT JOIN applications a ON a.job_id = j.id AND a.user_id = ?
+           WHERE j.id IN (${ids.map(() => "?").join(",")})`,
+          u.id,
+          u.id,
+          ...ids,
+        )
+      : []
+    ).map((r) => [r.id as string, r]),
   );
-  const total = one<{ n: number }>(`SELECT COUNT(*) AS n FROM jobs j LEFT JOIN matches m ON m.job_id = j.id AND m.user_id = ? WHERE ${where.join(" AND ")}`, ...params)?.n;
-  return c.json({ items: rows.map((r) => jobView(toJob(r), r.score == null ? null : r, r.app_id ? { id: r.app_id, status: r.app_status } : null)), total });
+  const rows = ids.map((id) => byId.get(id)!).filter(Boolean) as Record<string, any>[];
+  const total = one<{ n: number }>(
+    `SELECT COUNT(*) AS n FROM jobs j ${hits} ${forYou ? "JOIN matches m ON m.job_id = j.id AND m.user_id = ?" : ""} WHERE ${where.join(" AND ")}`,
+    ...hitParams,
+    ...(forYou ? [u.id] : []),
+    ...params,
+  )?.n;
+  return c.json({
+    items: rows.map((r) => jobView(toJob(r), r.score == null ? null : r, r.app_id ? { id: r.app_id, status: r.app_status } : null)),
+    total,
+    query: query.node ? { reading: describeQuery(query.node), scope } : null,
+  });
+});
+
+/** Location suggestions for the filter: places with open jobs, grouped (remote, metros, cities, states, countries). */
+api.get("/jobs/locations", (c) => {
+  const q = (c.req.query("q") ?? "").trim().toLowerCase();
+  const picked = new Set((c.req.query("selected") ?? "").split(",").filter(Boolean));
+  return c.json(locationSuggestions(q, picked));
 });
 
 api.get("/jobs/companies", (c) => c.json(all("SELECT company, COUNT(*) AS n FROM jobs WHERE closed_at IS NULL GROUP BY company ORDER BY n DESC")));
@@ -758,13 +816,17 @@ api.post("/sources", async (c) => {
     ats = p.ats;
     board = p.board;
   }
-  if (!ats || !board || !["greenhouse", "lever", "ashby", "smartrecruiters", "recruitee", "workday", "workable"].includes(ats)) return bad(c, "Provide a job URL from a Greenhouse, Lever, Ashby, Workday, Workable, SmartRecruiters, or Recruitee board");
-  const co = addCompany(b.name || board, ats, board);
+  if (!ats || !board || !FETCHERS[ats])
+    return bad(c, "Paste a careers or job link from Greenhouse, Lever, Ashby, Workday, Workable, SmartRecruiters, iCIMS, Oracle, Rippling, BambooHR, Pinpoint, Breezy, or Recruitee");
+  // Check the board is real (and learn the company's name) before watching it.
+  const sample = await FETCHERS[ats]({ id: null, name: b.name || board, ats, board }).catch(() => null);
+  if (!sample) return bad(c, "Couldn't read that company's job board. Check the link and try again.");
+  const co = addCompany(b.name || (ats !== "workday" && sample[0]?.company && sample[0].company !== board ? sample[0].company : board), ats, board);
   void pollAll({ onlyIds: [co.id] });
-  return c.json(co);
+  return c.json({ ...co, openJobs: sample.length });
 });
 api.post("/sources/poll", (c) => {
-  void pollAll();
+  void pollAll({ force: true });
   return c.json(pollerStatus());
 });
 

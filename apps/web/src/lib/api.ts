@@ -10,6 +10,7 @@ import type {
   JobCard,
   JobDetail,
   Me,
+  PlaceOption,
   Plan,
   Profile,
   AnswerEntry,
@@ -74,9 +75,13 @@ export const api = createApi({
       query: ({ limit = 30, offset = 0, minScore = 0 }) => `/jobs/recommendations?limit=${limit}&offset=${offset}&minScore=${minScore}`,
       providesTags: ["Jobs"],
     }),
-    searchJobs: b.query<{ items: JobCard[]; total: number }, Record<string, string>>({
+    searchJobs: b.query<{ items: JobCard[]; total: number; query: { reading: string; scope: "title" | "all" } | null }, Record<string, string>>({
       query: (p) => `/jobs/search?${new URLSearchParams(p)}`,
       providesTags: ["Jobs"],
+    }),
+    jobLocations: b.query<{ groups: { kind: "remote" | "metro" | "city" | "region" | "country"; items: PlaceOption[] }[]; selected: PlaceOption[] }, { q: string; selected: string[] }>({
+      query: ({ q, selected }) => `/jobs/locations?${new URLSearchParams({ q, selected: selected.join(",") })}`,
+      keepUnusedDataFor: 300,
     }),
     job: b.query<JobDetail, string>({ query: (id) => `/jobs/${id}`, providesTags: (_r, _e, id) => [{ type: "Jobs", id }] }),
     skipJob: b.mutation<void, string>({ query: (id) => ({ url: `/jobs/${id}/skip`, method: "POST" }), invalidatesTags: ["Jobs", "Bootstrap"] }),
@@ -184,9 +189,9 @@ export const api = createApi({
       query: () => "/sources",
       providesTags: ["Sources"],
     }),
-    addSource: b.mutation<Company, { name?: string; ats?: string; board?: string; url?: string }>({
+    addSource: b.mutation<Company & { openJobs?: number }, { name?: string; ats?: string; board?: string; url?: string }>({
       query: (body) => ({ url: "/sources", method: "POST", body }),
-      invalidatesTags: ["Sources"],
+      invalidatesTags: ["Sources", "Jobs"],
     }),
     pollNow: b.mutation<void, void>({ query: () => ({ url: "/sources/poll", method: "POST" }), invalidatesTags: ["Sources"] }),
 
@@ -324,6 +329,7 @@ export const {
   useGmailSyncMutation,
   useSourcesQuery,
   useAddSourceMutation,
+  useJobLocationsQuery,
   usePollNowMutation,
   usePlansQuery,
   useWalletQuery,

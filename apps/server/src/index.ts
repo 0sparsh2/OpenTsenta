@@ -10,6 +10,7 @@ import { closeBrowsers } from "./browser.ts";
 import { config, paths, ROOT } from "./config.ts";
 import { seedCompanies } from "./ingest/companies.ts";
 import { startPoller } from "./ingest/poller.ts";
+import { backfillJobPlaces } from "./store.ts";
 import { llmEnabled } from "./llm.ts";
 import { mcp } from "./mcp.ts";
 import { mockAts, seedSandboxJobs } from "./mock/ats.ts";
@@ -53,6 +54,7 @@ seedCompanies();
 seedSandboxJobs();
 recoverQueue();
 startPoller();
+setTimeout(() => void backfillJobPlaces(), 500); // once per location-parser version, in the background
 startMailSync();
 startNotifications();
 setMessagingEnqueue((id) => enqueue(id));

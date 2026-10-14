@@ -247,6 +247,9 @@ addColumn("applications", "resume_docx", "TEXT");
 addColumn("applications", "account_host", "TEXT");
 addColumn("applications", "review_resume", "INTEGER");
 addColumn("ats_accounts", "password_kind", "TEXT NOT NULL DEFAULT 'generated'");
+// Per-board polling schedule: big paged boards less often, failing boards back off.
+addColumn("companies", "next_poll_at", "TEXT");
+addColumn("companies", "fail_count", "INTEGER NOT NULL DEFAULT 0");
 
 db.exec(`
 CREATE TABLE IF NOT EXISTS sessions (
@@ -291,3 +294,48 @@ CREATE TABLE IF NOT EXISTS conversations (
   updated_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 `);
+
+// ---------- job search indexes ----------
+
+// Places each job's location names (city, metro, state, country, remote), for the location filter.
+db.exec(`
+CREATE TABLE IF NOT EXISTS job_places (
+  job_id TEXT NOT NULL REFERENCES jobs(id) ON DELETE CASCADE,
+  kind TEXT NOT NULL,
+  key TEXT NOT NULL,
+  label TEXT NOT NULL,
+  PRIMARY KEY (job_id, key)
+);
+CREATE INDEX IF NOT EXISTS job_places_key ON job_places(key, job_id);
+CREATE INDEX IF NOT EXISTS job_places_facet ON job_places(key, kind, label);
+`);
+
+// Open jobs, with just what list views filter and sort on. Job rows carry whole descriptions, so scanning them
+// to find the open ones reads most of the database; this index doesn't.
+db.exec(`CREATE INDEX IF NOT EXISTS jobs_open ON jobs(first_seen_at, posted_at, workplace, sponsors_visa, company, id) WHERE closed_at IS NULL;`);
+
+// Full-text index over title, company, location and description (keyword search with AND / OR / NOT / phrases).
+// External-content table kept in sync by triggers; unchanged text isn't re-indexed on every poll.
+// Bump FTS_VERSION when the index's settings change: the index is dropped and rebuilt from the jobs table.
+const FTS_VERSION = 2;
+const ftsVersion = Number(one<{ v: string }>("SELECT v FROM kv WHERE k = 'fts_version'")?.v ?? 0);
+if (ftsVersion !== FTS_VERSION) db.exec("DROP TABLE IF EXISTS jobs_fts");
+const hadFts = Boolean(one("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'jobs_fts'"));
+db.exec(`
+CREATE VIRTUAL TABLE IF NOT EXISTS jobs_fts USING fts5(title, company, location, description, content='jobs', content_rowid='rowid', tokenize="porter unicode61 remove_diacritics 2 tokenchars '+#'");
+CREATE TRIGGER IF NOT EXISTS jobs_fts_ai AFTER INSERT ON jobs BEGIN
+  INSERT INTO jobs_fts(rowid, title, company, location, description) VALUES (new.rowid, new.title, new.company, new.location, new.description);
+END;
+CREATE TRIGGER IF NOT EXISTS jobs_fts_ad AFTER DELETE ON jobs BEGIN
+  INSERT INTO jobs_fts(jobs_fts, rowid, title, company, location, description) VALUES ('delete', old.rowid, old.title, old.company, old.location, old.description);
+END;
+CREATE TRIGGER IF NOT EXISTS jobs_fts_au AFTER UPDATE OF title, company, location, description ON jobs
+WHEN old.title IS NOT new.title OR old.company IS NOT new.company OR old.location IS NOT new.location OR old.description IS NOT new.description BEGIN
+  INSERT INTO jobs_fts(jobs_fts, rowid, title, company, location, description) VALUES ('delete', old.rowid, old.title, old.company, old.location, old.description);
+  INSERT INTO jobs_fts(rowid, title, company, location, description) VALUES (new.rowid, new.title, new.company, new.location, new.description);
+END;
+`);
+if (!hadFts) {
+  db.exec("INSERT INTO jobs_fts(jobs_fts) VALUES ('rebuild')");
+  kvSet("fts_version", FTS_VERSION);
+}
