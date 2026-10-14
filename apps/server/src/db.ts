@@ -3,7 +3,11 @@ import crypto from "node:crypto";
 import { paths } from "./config.ts";
 
 export const db = new DatabaseSync(paths.db);
-db.exec("PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON; PRAGMA busy_timeout = 5000;");
+// Incremental vacuum: space freed by the job sweep goes back to the disk a little at a time (takes effect on a new
+// database; an existing one needs a one-time VACUUM to switch).
+db.exec("PRAGMA auto_vacuum = INCREMENTAL; PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON; PRAGMA busy_timeout = 5000;");
+/** Return up to `pages` free pages (4 KB each) to the disk. A no-op unless auto_vacuum is incremental. */
+export const reclaimSpace = (pages = 4000) => db.exec(`PRAGMA incremental_vacuum(${Math.max(1, Math.floor(pages))})`);
 
 db.exec(`
 CREATE TABLE IF NOT EXISTS users (
@@ -317,7 +321,10 @@ CREATE INDEX IF NOT EXISTS job_places_facet ON job_places(key, kind, label);
 // Open jobs, with just what list views filter and sort on. Job rows carry whole descriptions, so scanning them
 // to find the open ones reads most of the database; this index doesn't.
 db.exec(`CREATE INDEX IF NOT EXISTS jobs_open ON jobs(first_seen_at, posted_at, workplace, sponsors_visa, company, id) WHERE closed_at IS NULL;
-CREATE INDEX IF NOT EXISTS jobs_closed ON jobs(closed_at) WHERE closed_at IS NOT NULL;`);
+CREATE INDEX IF NOT EXISTS jobs_closed ON jobs(closed_at) WHERE closed_at IS NOT NULL;
+-- Deleting a job cascades to its matches and applications: without these, every delete scans both tables.
+CREATE INDEX IF NOT EXISTS matches_job ON matches(job_id);
+CREATE INDEX IF NOT EXISTS applications_job ON applications(job_id);`);
 
 // Full-text index over title, company, location and description (keyword search with AND / OR / NOT / phrases).
 // External-content table kept in sync by triggers; unchanged text isn't re-indexed on every poll.

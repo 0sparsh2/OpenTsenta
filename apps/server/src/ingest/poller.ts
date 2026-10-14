@@ -1,5 +1,5 @@
 import { config } from "../config.ts";
-import { all, now, one, run, tx } from "../db.ts";
+import { all, now, one, reclaimSpace, run, tx } from "../db.ts";
 import { broadcast } from "../bus.ts";
 import { ingestJob, type JobInput } from "../store.ts";
 import { matchNewJobs } from "../match/score.ts";
@@ -101,8 +101,8 @@ export async function sweepOldJobs(): Promise<number> {
   const seen = now();
   let total = 0;
   for (const [sql, args] of [
-    [`SELECT id, ats, external_id, posted_at FROM jobs WHERE closed_at IS NULL AND COALESCE(posted_at, first_seen_at) < ? AND ${KEEP_IF_YOURS} LIMIT 1000`, [openCutoff]],
-    [`SELECT id, ats, external_id, posted_at FROM jobs WHERE closed_at IS NOT NULL AND closed_at < datetime('now', ?) AND ${KEEP_IF_YOURS} LIMIT 1000`, [`-${config.closedJobRetentionDays} days`]],
+    [`SELECT id, ats, external_id, posted_at FROM jobs WHERE closed_at IS NULL AND COALESCE(posted_at, first_seen_at) < ? AND ${KEEP_IF_YOURS} LIMIT 250`, [openCutoff]],
+    [`SELECT id, ats, external_id, posted_at FROM jobs WHERE closed_at IS NOT NULL AND closed_at < datetime('now', ?) AND ${KEEP_IF_YOURS} LIMIT 250`, [`-${config.closedJobRetentionDays} days`]],
   ] as const) {
     for (;;) {
       const rows = all<{ id: string; ats: string; external_id: string; posted_at: string | null }>(sql, ...args);
@@ -119,6 +119,7 @@ export async function sweepOldJobs(): Promise<number> {
       await sleep(10);
     }
   }
+  if (total) reclaimSpace();
   // Tombstones for jobs no board has listed in a month aren't needed.
   run("DELETE FROM job_tombstones WHERE last_seen < ?", new Date(Date.now() - 30 * 86400_000).toISOString());
   return total;
