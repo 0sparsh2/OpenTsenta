@@ -3,10 +3,12 @@
 FROM mcr.microsoft.com/playwright:v1.64.0-noble
 
 WORKDIR /app
+# Password sign-in: the image is for hosting, and dev mode signs anyone in by email alone.
 ENV NODE_ENV=production \
     PORT=8080 \
     DATA_DIR=/data \
-    HEADLESS=true
+    HEADLESS=true \
+    AUTH_MODE=password
 
 COPY package.json package-lock.json ./
 COPY apps/server/package.json apps/server/

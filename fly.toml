@@ -1,5 +1,9 @@
-# fly launch --copy-config --no-deploy && fly volumes create ferry_data --size 3 && fly deploy
-# Then set secrets: fly secrets set ANTHROPIC_API_KEY=... RESEND_API_KEY=... STRIPE_SECRET_KEY=... (see .env.example)
+# One-time setup (pick your own app name; the URL becomes https://<app>.fly.dev):
+#   fly launch --copy-config --no-deploy --name <app>
+#   fly volumes create ferry_data --size 3 --region sjc
+#   fly secrets set PUBLIC_URL=https://<app>.fly.dev NVIDIA_NIM_API_KEY=nvapi-...   (optional: RESEND_API_KEY, STRIPE_SECRET_KEY; see .env.example)
+#   fly deploy
+# Then connect Claude: claude.ai → Settings → Connectors → Add custom connector → https://<app>.fly.dev/api/v1/mcp
 app = "ferry-jobs"
 primary_region = "sjc"
 

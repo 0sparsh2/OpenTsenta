@@ -107,7 +107,7 @@ Everything above runs and is tested locally without external accounts. These key
 
 | Key | Unlocks | Without it |
 |---|---|---|
-| `NVIDIA_NIM_API_KEY` (or `ANTHROPIC_API_KEY`) | AI matching, tailoring rewrites, cover letters, open-ended answers, navigator. With a NIM key Ferry uses DeepSeek v4.1 (`deepseek-ai/deepseek-v4.1-flash`) through NVIDIA's OpenAI-compatible API, falling back to `LLM_FALLBACK_MODELS` when it's slow; `LLM_PROVIDER=anthropic` switches to Claude | Rule-based answers. Essays go to "Needs you". |
+| `NVIDIA_NIM_API_KEY` (or `ANTHROPIC_API_KEY`) | AI matching, tailoring rewrites, cover letters, open-ended answers, navigator. With a NIM key Ferry writes with DeepSeek v4.1 (`deepseek-ai/deepseek-v4.1-flash`) and sends quick, high-volume calls (match scores, inbox sorting, extraction) to `LLM_FAST_MODEL` (Nemotron by default), through NVIDIA's OpenAI-compatible API; slow or failing models fall back to `LLM_FALLBACK_MODELS`. `LLM_PROVIDER=anthropic` switches to Claude. `npx tsx apps/server/scripts/qa-llm.ts` checks every AI feature against the real model | Rule-based answers. Essays go to "Needs you". |
 | `ALLOW_REAL_SUBMIT=true` | Submitting to real employers | Real forms are filled and stopped before Submit (dry run, no uploads) |
 | `RESEND_API_KEY` | Real outbound email | Mail goes to the local sandbox mailbox |
 | `GOOGLE_CLIENT_ID/SECRET` | One-click Gmail | Users can still connect any inbox with an IMAP app password |
@@ -138,7 +138,20 @@ Automated applications may conflict with some employers' or job boards' terms. T
 docker compose up -d          # self-host: http://localhost:8787, data in ./data
 ```
 
-To deploy on Fly.io, run `fly launch --copy-config --no-deploy`, then `fly volumes create ferry_data --size 3`, then `fly deploy`.
+To deploy on Fly.io (HTTPS, which claude.ai connectors require):
+
+```bash
+fly launch --copy-config --no-deploy --name <app>
+fly volumes create ferry_data --size 3 --region sjc
+fly secrets set PUBLIC_URL=https://<app>.fly.dev NVIDIA_NIM_API_KEY=nvapi-...
+fly deploy
+```
+
+Then in claude.ai, go to Settings → Connectors → Add custom connector and enter `https://<app>.fly.dev/api/v1/mcp`.
+Claude registers itself, you sign in to Ferry and approve, and the tools appear.
+
+The image signs in with passwords (`AUTH_MODE=password`). The server refuses to start in passwordless dev mode on a
+public `PUBLIC_URL`.
 
 The image is based on Playwright's official image, so Chromium and its libraries are included. Run a single instance:
 the database is SQLite on a volume, and the watcher and apply queue run in-process.

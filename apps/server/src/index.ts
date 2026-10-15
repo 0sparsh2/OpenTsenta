@@ -62,6 +62,12 @@ startNotifications();
 setMessagingEnqueue((id) => enqueue(id));
 setInterval(() => markGhosted(), 6 * 3600_000).unref();
 
+// Local mode signs anyone in by email alone. On a public address that would let anyone into any account, so refuse.
+if (config.authMode === "dev" && !/^https?:\/\/(localhost|127\.0\.0\.1|\[::1\])(:\d+)?(\/|$)/.test(config.publicUrl)) {
+  console.error(`Refusing to start: AUTH_MODE=dev (passwordless sign-in) with a public PUBLIC_URL (${config.publicUrl}). Set AUTH_MODE=password.`);
+  process.exit(1);
+}
+
 const server = serve({ fetch: app.fetch, port: config.port }, (info) => {
   console.log(`${config.brand} API on http://localhost:${info.port}  ·  LLM ${llmEnabled() ? `on (${llmLabel()})` : "off (heuristic fallbacks)"}  ·  real submit ${config.allowRealSubmit ? "ON" : "off (dry run)"}`);
 });

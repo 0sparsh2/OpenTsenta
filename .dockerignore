@@ -7,3 +7,5 @@ apps/mobile/android
 .env
 *.log
 .git
+.claude
+.DS_Store
