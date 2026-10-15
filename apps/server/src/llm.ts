@@ -12,7 +12,8 @@ const getClient = () => (client ??= new Anthropic());
 
 export const llmEnabled = () => (config.llmProvider === "nim" ? config.nimEnabled : config.anthropicEnabled);
 /** The model doing the work, for status lines. */
-export const llmLabel = () => (config.llmProvider === "nim" ? `${config.model} via NVIDIA NIM` : config.model);
+export const llmLabel = () =>
+  config.llmProvider === "nim" ? `${config.model}${config.fastModel && config.fastModel !== config.model ? ` (quick tasks: ${config.fastModel})` : ""} via NVIDIA NIM` : config.model;
 
 export class LlmUnavailable extends Error {}
 
@@ -102,13 +103,24 @@ type ChatMessage = { role: "system" | "user" | "assistant"; content: string };
 const resting = new Map<string, number>();
 /** Models that reject response_format: json_object (asked for JSON in the prompt alone). */
 const noJsonMode = new Set<string>();
+/** Models whose chat template rejects the thinking switch. */
+const noThinkSwitch = new Set<string>();
+/** Extra tokens a thinking model may spend reasoning before it writes the answer (they count against max_tokens). */
+const THINK_BUDGET = 8000;
 
 const promptText = (p: string | Anthropic.Beta.BetaContentBlockParam[]) =>
   typeof p === "string" ? p : p.map((b) => (b.type === "text" ? b.text : "")).filter(Boolean).join("\n\n");
 
-async function nimRequest(model: string, messages: ChatMessage[], opts: { maxTokens: number; json: boolean; temperature: number }): Promise<string> {
-  const body: Record<string, unknown> = { model, messages, max_tokens: opts.maxTokens, temperature: opts.temperature };
+/**
+ * One chat completion. DeepSeek and Nemotron think before answering by default, and that reasoning counts against
+ * max_tokens: a short budget comes back with no answer at all. So thinking is off unless asked for (high effort), and
+ * then gets its own budget; a thinking reply that still runs dry is asked again with thinking off.
+ */
+async function nimRequest(model: string, messages: ChatMessage[], opts: { maxTokens: number; json: boolean; temperature: number; think: boolean }): Promise<string> {
+  const body: Record<string, unknown> = { model, messages, max_tokens: opts.maxTokens + (opts.think ? THINK_BUDGET : 0), temperature: opts.temperature };
   if (opts.json && !noJsonMode.has(model)) body.response_format = { type: "json_object" };
+  // DeepSeek's template reads `thinking`, Nemotron's `enable_thinking`; each ignores the other's.
+  if (!noThinkSwitch.has(model)) body.chat_template_kwargs = { thinking: opts.think, enable_thinking: opts.think };
   let res: Response;
   try {
     res = await fetch(`${config.nimBaseUrl}/chat/completions`, {
@@ -120,9 +132,13 @@ async function nimRequest(model: string, messages: ChatMessage[], opts: { maxTok
   } catch (e) {
     throw new LlmUnavailable(/abort|timeout/i.test(String((e as Error).message)) ? `${model} timed out` : `connection error (${(e as Error).message})`);
   }
-  if (res.status === 400 && body.response_format) {
+  if (res.status === 400) {
     const t = await res.text();
-    if (/response_format|json/i.test(t)) {
+    if (body.chat_template_kwargs && /chat_template|thinking/i.test(t)) {
+      noThinkSwitch.add(model);
+      return nimRequest(model, messages, opts);
+    }
+    if (body.response_format && /response_format|json/i.test(t)) {
       noJsonMode.add(model);
       return nimRequest(model, messages, opts);
     }
@@ -132,8 +148,12 @@ async function nimRequest(model: string, messages: ChatMessage[], opts: { maxTok
   if (!res.ok) throw new LlmUnavailable(`${model}: API error ${res.status}: ${(await res.text()).slice(0, 200)}`);
   const d = (await res.json()) as { choices?: { message?: { content?: string | null }; finish_reason?: string }[] };
   const c = d.choices?.[0];
-  if (!c?.message?.content) throw new LlmUnavailable(`${model}: empty reply${c?.finish_reason === "length" ? " (ran out of tokens)" : ""}`);
-  return c.message.content;
+  if (!c?.message?.content) {
+    if (opts.think) return nimRequest(model, messages, { ...opts, think: false });
+    throw new LlmUnavailable(`${model}: empty reply${c?.finish_reason === "length" ? " (ran out of tokens)" : ""}`);
+  }
+  // Some templates leave the reasoning inline.
+  return c.message.content.replace(/^\s*<think>[\s\S]*?<\/think>\s*/, "");
 }
 
 /** A small queue: at most LLM_CONCURRENCY requests in flight. */
@@ -153,12 +173,15 @@ async function slot<T>(fn: () => Promise<T>): Promise<T> {
 /** Try the main model, then the fallbacks; a model that fails rests for five minutes. */
 async function nimChat(system: string, prompt: string | ChatMessage[], opts: { maxTokens?: number; effort?: Effort; json?: boolean } = {}): Promise<string> {
   const messages: ChatMessage[] = [{ role: "system", content: system }, ...(typeof prompt === "string" ? [{ role: "user" as const, content: prompt }] : prompt)];
-  const models = [config.model, ...config.fallbackModels.filter((m) => m !== config.model)];
+  const first = opts.effort === "low" && config.fastModel ? [config.fastModel, config.model] : [config.model];
+  const models = [...new Set([...first, ...config.fallbackModels])];
   const awake = models.filter((m) => (resting.get(m) ?? 0) < Date.now());
   let last: Error | null = null;
   for (const model of awake.length ? awake : models) {
     try {
-      return await slot(() => nimRequest(model, messages, { maxTokens: opts.maxTokens ?? 8000, json: Boolean(opts.json), temperature: opts.effort === "high" ? 0.4 : 0.2 }));
+      const reply = await slot(() => nimRequest(model, messages, { maxTokens: opts.maxTokens ?? 8000, json: Boolean(opts.json), temperature: opts.effort === "high" ? 0.4 : 0.2, think: opts.effort === "high" }));
+      if (process.env.LLM_DEBUG) console.error(`[llm] ${model} replied:\n${reply.slice(0, 4000)}`);
+      return reply;
     } catch (e) {
       last = e as Error;
       if (/credentials/.test(last.message)) throw last;
@@ -183,16 +206,43 @@ export function extractJson(s: string): unknown {
   }
 }
 
+/**
+ * Smaller models drop properties they'd leave empty and send 1 for "1". Fill what the schema can say for certain:
+ * a missing required text is "", a missing list is [], a number or yes/no where text belongs becomes text.
+ * Anything else is left for the schema check (and the repair turn) to catch.
+ */
+export function fillGaps(v: unknown, s: any): unknown {
+  if (!s || typeof s !== "object") return v;
+  if (s.type === "object" && v && typeof v === "object" && !Array.isArray(v)) {
+    const o = { ...(v as Record<string, unknown>) };
+    for (const [k, ps] of Object.entries<any>(s.properties ?? {})) {
+      if (o[k] === undefined || o[k] === null) {
+        if (!s.required?.includes(k)) continue;
+        const t = ps.type ?? ps.anyOf?.[0]?.type;
+        if (t === "string" && !ps.enum && !ps.anyOf?.[0]?.enum) o[k] = "";
+        else if (t === "array") o[k] = [];
+        continue;
+      }
+      o[k] = fillGaps(o[k], ps);
+    }
+    return o;
+  }
+  if (s.type === "array" && Array.isArray(v)) return v.map((x) => fillGaps(x, s.items));
+  const takesText = (x: any) => x?.type === "string" && !x.enum;
+  if ((takesText(s) || s.anyOf?.some(takesText)) && (typeof v === "number" || typeof v === "boolean")) return String(v);
+  return v;
+}
+
 async function nimStructured<S extends z.ZodType>(req: StructuredRequest<S>): Promise<z.infer<S>> {
   const schema = z.toJSONSchema(req.schema, { target: "draft-7", unrepresentable: "any" });
   const system = `${req.system}\n\nReply with one JSON object only (no prose, no code fences) that matches this JSON Schema exactly. Every required property must be present; use "" or [] when unknown.\n${JSON.stringify(schema)}`;
   const user = promptText(req.prompt);
   const convo: ChatMessage[] = [{ role: "user", content: user }];
+  let problem = "";
   for (let attempt = 0; attempt < 2; attempt++) {
     const reply = await nimChat(system, convo, { maxTokens: req.maxTokens ?? 8000, effort: req.effort, json: true });
-    let problem: string;
     try {
-      const parsed = req.schema.safeParse(extractJson(reply));
+      const parsed = req.schema.safeParse(fillGaps(extractJson(reply), schema));
       if (parsed.success) return parsed.data;
       problem = parsed.error.issues.slice(0, 8).map((i) => `${i.path.join(".") || "(root)"}: ${i.message}`).join("; ");
     } catch (e) {
@@ -201,5 +251,5 @@ async function nimStructured<S extends z.ZodType>(req: StructuredRequest<S>): Pr
     // One repair turn: show the model what didn't match.
     convo.push({ role: "assistant", content: reply.slice(0, 20000) }, { role: "user", content: `That JSON doesn't match the schema (${problem}). Reply with the corrected JSON object only.` });
   }
-  throw new LlmUnavailable("unparseable structured output");
+  throw new LlmUnavailable(`unparseable structured output (${problem.slice(0, 300)})`);
 }

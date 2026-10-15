@@ -79,6 +79,9 @@ const TEXT_FIELDS: Record<string, string[]> = {
   certifications: ["name", "issuer"],
 };
 
+/** Generic typeface names people (and models) use for the ones Ferry has. */
+const FONT_ALIASES: Record<string, string> = { serif: "georgia", "sans-serif": "arial", sans: "arial", "times new roman": "times", helvetica: "arial" };
+
 /** Apply validated operations. Unknown targets are skipped and reported, never guessed. */
 export function applyOps(input: ResumeDoc, ops: EditOp[]): { doc: ResumeDoc; changes: string[]; skipped: string[] } {
   const doc = normalizeDoc(structuredClone(input));
@@ -227,7 +230,9 @@ export function applyOps(input: ResumeDoc, ops: EditOp[]): { doc: ResumeDoc; cha
         const order = layout.sectionOrder.filter((k) => k !== o.target);
         const i = layout.sectionOrder.indexOf(o.target);
         let j = i;
-        const [where, ref] = (o.value ?? "").split(":");
+        // "after:skills", also "after skills", "below:skills", "top".
+        const [w, ref] = (o.value ?? "").trim().toLowerCase().split(/\s*[:\s]\s*/);
+        const where = ({ below: "after", above: "before", top: "first", bottom: "last" } as Record<string, string>)[w] ?? w;
         if (where === "first") j = 0;
         else if (where === "last") j = order.length;
         else if (where === "up") j = Math.max(0, i - 1);
@@ -260,7 +265,8 @@ export function applyOps(input: ResumeDoc, ops: EditOp[]): { doc: ResumeDoc; cha
       }
       case "set_style": {
         const s = layout.style;
-        const v = o.value ?? "";
+        const raw = (o.value ?? "").trim();
+        const v = o.target === "font" ? (FONT_ALIASES[raw.toLowerCase()] ?? raw.toLowerCase()) : o.target === "template" ? raw.toLowerCase() : raw;
         if (o.target === "template" && RESUME_TEMPLATES.includes(v as never)) {
           if (s.template !== v) {
             s.template = v as typeof s.template;
@@ -307,9 +313,14 @@ export function newNumbers(before: ResumeDoc, after: ResumeDoc, prompt: string):
 
 const OpSchema = z.object({
   op: z.enum(EDIT_OPS),
-  target: z.string().describe("summary | headline | experience:<id> | projects:<id> | education:<id> | certifications:<id> | a section key | a header link | a style key"),
+  target: z
+    .string()
+    .describe(
+      "summary | headline | experience:<id> | projects:<id> | education:<id> | certifications:<id>; for section ops the section key (skills, experience…); for link ops the link (phone, email…); for set_style the setting itself (template, font, fontSize, pageLimit, align, links, trimToFit), never \"style\"",
+    ),
   field: z.string().describe("For set_text on entries: title, company, location, summary, name, description, school, degree, field, honors, issuer. Else empty."),
-  value: z.string().describe("New text, position (first/last/up/down/before:<section>/after:<section>), or style value. Else empty."),
+  // Models sometimes put a bullet list here; it's moved to values.
+  value: z.union([z.string(), z.array(z.string())]).describe("New text, position (first/last/up/down/before:<section>/after:<section>), or style value. Else empty."),
   values: z.array(z.string()).describe("Bullets for set_bullets, skills for skill ops. Else empty."),
 });
 const ModifySchema = z.object({
@@ -324,7 +335,7 @@ async function llmModify(doc: ResumeDoc, prompt: string, job?: Job | null): Prom
     system: `You edit a candidate's résumé by returning edit operations, following their request exactly and changing nothing else.
 Rules:
 - Ground everything in the résumé and the request. Never invent employers, titles, dates, credentials, metrics, or numbers; the candidate may state new facts in the request, and you may use those.
-- Use the ids from the résumé JSON. To change bullets, return the full new list for that role (set_bullets).
+- Use the ids from the résumé JSON; entries are listed most recent first. To change bullets, return the full new list for that role (set_bullets), keeping its numbers and results.
 - Prefer hide over remove unless they say delete/remove permanently.
 - Sections: ${[...BUILTIN_SECTIONS].join(", ")} (or custom:<id>). Header links: ${HEADER_LINKS.join(", ")}.
 - Style keys: template (${RESUME_TEMPLATES.join("|")}), font (${RESUME_FONTS.join("|")}), fontSize (8.5-12.5), pageLimit (0|1|2), align (left|justify), links (url|label), trimToFit (true|false).
@@ -338,7 +349,24 @@ Rules:
 
 <request>${prompt}</request>`,
   });
-  return { ops: out.ops.map((o) => ({ op: o.op, target: o.target || undefined, field: o.field || undefined, value: o.value || undefined, values: o.values.length ? o.values : undefined })), reply: out.reply };
+  return { ops: out.ops.map(readOp), reply: out.reply };
+}
+
+/**
+ * The op as meant, from the shapes models actually send: a bullet list in value, a position in values
+ * (["after:skills"]), or set_style with target "style" and the setting in field or in value ("pageLimit: 1").
+ */
+function readOp(o: z.infer<typeof OpSchema>): EditOp {
+  let values = [...o.values, ...(Array.isArray(o.value) ? o.value : [])];
+  let value = typeof o.value === "string" ? o.value : "";
+  let { target, field } = o;
+  if ((o.op === "move_section" || o.op === "move_entry") && !value && values.length === 1) [value, values] = [values[0], []];
+  if (o.op === "set_style" && target === "style") {
+    const kv = value.match(/^\s*(\w+)\s*[:=]\s*(.+)$/);
+    if (field) [target, field] = [field, ""];
+    else if (kv) [target, value] = [kv[1], kv[2]];
+  }
+  return { op: o.op, target: target || undefined, field: field || undefined, value: value || undefined, values: values.length ? values : undefined };
 }
 
 // ---------- rules (no API key) ----------
@@ -487,15 +515,18 @@ export async function modifyResume(doc: ResumeDoc, prompt: string, job?: Job | n
       const plan = await llmModify(base, prompt, job);
       const r = applyOps(base, plan.ops);
       const invented = newNumbers(base, r.doc, prompt);
+      const warnings = invented.length ? [`Check these numbers; they aren't in your résumé: ${invented.join(", ")}`] : [];
+      // The reply is the model's account; this is what actually didn't happen.
+      if (r.skipped.length) warnings.push(`Not applied: ${r.skipped.join("; ")}`);
       return {
         doc: r.doc,
         changes: r.changes,
         reply: plan.reply,
-        warnings: invented.length ? [`Check these numbers; they aren't in your résumé: ${invented.join(", ")}`] : [],
+        warnings,
         method: "llm",
       };
     } catch (e) {
-      console.warn("[resume] modify via Claude failed, using rules:", (e as Error).message);
+      console.warn("[resume] modify via the model failed, using rules:", (e as Error).message);
     }
   }
   const plan = interpretPrompt(base, prompt);

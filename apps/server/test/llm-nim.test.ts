@@ -6,7 +6,7 @@ import assert from "node:assert/strict";
 import http from "node:http";
 import type { AddressInfo } from "node:net";
 
-const seen: { model: string; auth?: string; json: boolean; system: string; turns: number }[] = [];
+const seen: { model: string; auth?: string; json: boolean; system: string; turns: number; think: boolean; maxTokens: number }[] = [];
 
 /** Fills a JSON Schema with plausible values. */
 function sample(s: any): any {
@@ -26,11 +26,18 @@ const server = http.createServer((req, res) => {
   req.on("end", () => {
     const body = JSON.parse(raw);
     const system = body.messages[0].content as string;
-    seen.push({ model: body.model, auth: req.headers.authorization, json: body.response_format?.type === "json_object", system, turns: body.messages.length });
+    const think = body.chat_template_kwargs?.thinking === true && body.chat_template_kwargs?.enable_thinking === true;
+    seen.push({ model: body.model, auth: req.headers.authorization, json: body.response_format?.type === "json_object", system, turns: body.messages.length, think, maxTokens: body.max_tokens });
     const reply = (content: string) => {
       res.writeHead(200, { "Content-Type": "application/json" });
       res.end(JSON.stringify({ choices: [{ message: { role: "assistant", content }, finish_reason: "stop" }] }));
     };
+    // A thinking model that spends its whole budget reasoning: no answer.
+    if (think) {
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ choices: [{ message: { role: "assistant", content: null, reasoning_content: "Let me think…" }, finish_reason: "length" }] }));
+      return;
+    }
     const schemaText = system.slice(system.lastIndexOf("\n") + 1);
     const schema = schemaText.startsWith("{") ? JSON.parse(schemaText) : null;
     switch (body.model) {
@@ -62,6 +69,7 @@ Object.assign(process.env, {
   LLM_PROVIDER: "nim",
   LLM_MODEL: "stalled",
   LLM_FALLBACK_MODELS: "down,sloppy",
+  LLM_FAST_MODEL: "quick",
   LLM_TIMEOUT_MS: "400",
   LLM_DISABLED: "false",
 });
@@ -77,7 +85,7 @@ const Fit = z.object({ score: z.number().int(), verdict: z.enum(["strong", "good
 
 test("NIM: OpenAI-style request with the key and JSON mode; a stalled and a down model are passed over; bad JSON is repaired", async () => {
   assert.equal(llmEnabled(), true);
-  assert.match(llmLabel(), /stalled via NVIDIA NIM/);
+  assert.match(llmLabel(), /stalled \(quick tasks: quick\) via NVIDIA NIM/);
   const t0 = Date.now();
   const r = await structured({ system: "Score the fit.", prompt: "Candidate vs job.", schema: Fit });
   assert.deepEqual(r, { score: 80, verdict: "strong", reasons: ["sample"] });
@@ -88,6 +96,7 @@ test("NIM: OpenAI-style request with the key and JSON mode; a stalled and a down
     "main model, then fallbacks in order; one repair turn on the model that answered",
   );
   assert.ok(seen.every((s) => s.auth === "Bearer nvapi-test" && s.json));
+  assert.ok(seen.every((s) => !s.think), "thinking is off unless asked for");
   assert.match(seen[0].system, /^Score the fit\.\n\nReply with one JSON object only/);
   assert.equal(seen[3].turns, 4, "the repair turn shows the model its reply and what didn't match");
 
@@ -99,6 +108,29 @@ test("NIM: OpenAI-style request with the key and JSON mode; a stalled and a down
     ["sloppy"],
   );
   assert.equal(seen[0].json, false, "free text isn't JSON mode");
+
+  // High effort thinks, with room to reason on top of the answer; a reply that runs dry is asked again without it.
+  seen.length = 0;
+  assert.equal(await text({ system: "Be brief.", prompt: "Why tailor a résumé?", effort: "high", maxTokens: 1000 }), "Hi there.");
+  assert.deepEqual(
+    seen.map((s) => [s.model, s.think, s.maxTokens]),
+    [
+      ["sloppy", true, 9000],
+      ["sloppy", false, 1000],
+    ],
+  );
+});
+
+test("quick tasks go to the fast model first; writing stays on the main one", async () => {
+  seen.length = 0;
+  await structured({ system: "Classify.", prompt: "An email.", schema: Fit, effort: "low" });
+  assert.deepEqual(
+    seen.map((s) => s.model),
+    ["quick"],
+  );
+  seen.length = 0;
+  await text({ system: "Write.", prompt: "A letter.", effort: "medium" });
+  assert.notEqual(seen[0].model, "quick");
 });
 
 test("extractJson: plain, fenced, or wrapped in a sentence", () => {
@@ -106,4 +138,21 @@ test("extractJson: plain, fenced, or wrapped in a sentence", () => {
   assert.deepEqual(extractJson('```json\n{"a":[1,2]}\n```'), { a: [1, 2] });
   assert.deepEqual(extractJson('Here you go: {"a":"x"} hope that helps'), { a: "x" });
   assert.throws(() => extractJson("no json here"));
+});
+
+test("fillGaps: missing empty fields filled, numbers where text belongs turned to text, nothing else guessed", async () => {
+  const { fillGaps } = await import("../src/llm.ts");
+  const Op = z.object({ op: z.enum(["set", "hide"]), value: z.union([z.string(), z.array(z.string())]), values: z.array(z.string()), note: z.string().optional() });
+  const schema = z.toJSONSchema(z.object({ ops: z.array(Op), reply: z.string() }), { target: "draft-7" });
+  assert.deepEqual(fillGaps({ ops: [{ op: "set", value: 1 }, { op: "hide", value: ["a"], values: ["b"] }] }, schema), {
+    ops: [
+      { op: "set", value: "1", values: [] },
+      { op: "hide", value: ["a"], values: ["b"] },
+    ],
+    reply: "",
+  });
+  // A missing enum or a wrong shape is left for the schema check.
+  assert.deepEqual(fillGaps({ ops: ["hide it"] }, schema), { ops: ["hide it"], reply: "" });
+  assert.deepEqual(fillGaps({ ops: [{ op: "hide", values: [] }] }, schema), { ops: [{ op: "hide", value: "", values: [] }], reply: "" }, "a missing text-or-list is empty text");
+  assert.equal(z.object({ ops: z.array(Op), reply: z.string() }).safeParse(fillGaps({ ops: [{ value: "x" }] }, schema)).success, false);
 });

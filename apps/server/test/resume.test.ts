@@ -364,3 +364,22 @@ test("answer rules: AI-bait questions go to you; education, location, and family
   const citizen = await answerFields({ profile: { ...profile, workAuth: { authorizedCountries: ["US"], needsSponsorship: false, citizenship: "US" } }, doc, job, resumePdf: null, coverPdf: null, coverText: null, prior: [], autoWrite: false }, [fields.find((f) => f.id === "m")]);
   assert.equal(citizen[0].value, "I am a U.S. Citizen/Permanent Resident");
 });
+
+test("tailoring guard: claims only the posting makes are refused; the posting's terms for real work are fine", async () => {
+  const { borrowedClaims, groundingFor, roleWords } = await import("../src/resume/tailor.ts");
+  const { heuristicParse } = await import("../src/resume/parse.ts");
+  const doc = heuristicParse(fs.readFileSync(path.join(import.meta.dirname, "../../../samples/alex_morgan_resume.txt"), "utf8")).doc;
+  const g = groundingFor(doc, { title: "Senior Platform Engineer", description: "Build distributed services in TypeScript and Go; own REST and GraphQL APIs; improve observability of the robot fleet; run PostgreSQL, Redis, Kafka and Snowflake on AWS." });
+  const check = (t: string, mode: "honest" | "aggressive" = "honest") => borrowedClaims(t, g.source, g.job, mode);
+  assert.deepEqual(check("Built distributed Go microservices on Kubernetes, cutting p95 latency 38%."), [], "one borrowed word is the posting's terminology");
+  assert.deepEqual(check("Ran Kafka and Redis on AWS for real-time tracking."), [], "Kafka is in the résumé's skills");
+  assert.deepEqual(check("Improved observability of fleet services."), ["observability", "fleet"], "two posting-only words are a claim");
+  assert.deepEqual(check("Moved reporting data into Snowflake."), ["Snowflake"], "a tool the résumé never mentions");
+  assert.deepEqual(check("Moved reporting data into Snowflake.", "aggressive"), [], "aggressive mode may surface implied tools, one at a time");
+  // Per role: the posting's keywords in a bullet must be backed by that role, not another job or the skills list.
+  const brightline = roleWords(doc.experience[0]);
+  const inRole = (t: string) => borrowedClaims(t, g.source, g.job, "honest", brightline);
+  assert.deepEqual(inRole("Led the move to Go microservices on Kubernetes, cutting p95 latency 38%."), []);
+  assert.deepEqual(inRole("Built distributed services in TypeScript and Go; owned REST and GraphQL APIs."), [], "one borrowed term");
+  assert.deepEqual(inRole("Set up observability for microservices using PostgreSQL, Redis, and Kafka on AWS.").sort(), ["Kafka", "PostgreSQL", "Redis", "observability"]);
+});

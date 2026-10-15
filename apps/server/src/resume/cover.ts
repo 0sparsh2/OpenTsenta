@@ -11,7 +11,7 @@ export async function writeCoverLetter(profile: Profile, doc: ResumeDoc, job: Jo
     () =>
       text({
         system: `You write concise, specific cover letters in the candidate's own plain voice. 3 short paragraphs, under 220 words.
-No clichés ("I am writing to express", "passionate", "perfect fit"). Cite 2 concrete achievements from the résumé that map to the posting.
+No clichés ("I am writing to express", "passionate", "perfect fit"). Cite 2 concrete achievements from the résumé that map to the posting, each with the employer it happened at.
 ${mode === "honest" ? "Only use facts from the résumé." : "Lead with the strongest truthful framing; never invent facts."}
 Output only the letter body, starting with "Dear Hiring Team," and ending with the candidate's name.`,
         effort: "medium",

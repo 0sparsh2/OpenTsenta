@@ -33,6 +33,11 @@ export const config = {
   nimEnabled: Boolean(process.env.NVIDIA_NIM_API_KEY) && !bool("LLM_DISABLED", false),
   nimBaseUrl: env("NVIDIA_NIM_BASE_URL", "https://integrate.api.nvidia.com/v1").replace(/\/$/, ""),
   model: env("LLM_MODEL", (env("LLM_PROVIDER") || (process.env.NVIDIA_NIM_API_KEY ? "nim" : "anthropic")) === "nim" ? "deepseek-ai/deepseek-v4.1-flash" : "claude-opus-5-5"),
+  /**
+   * NIM: quick, high-volume calls (match scores, inbox sorting, posting and résumé extraction) go to this faster model
+   * first; writing (tailoring, letters, answers, edits) stays on the main one. Empty = everything on the main model.
+   */
+  fastModel: env("LLM_FAST_MODEL", "nvidia/nemotron-3.5-lightning-30b-a3b"),
   /** NIM models tried in order when the main one is slow or down (comma-separated). */
   fallbackModels: env("LLM_FALLBACK_MODELS", "nvidia/nemotron-3.5-lightning-30b-a3b").split(",").map((s) => s.trim()).filter(Boolean),
   /** One model call's time limit; past it, the next model is tried (and AI features fall back to rules at the end). */
