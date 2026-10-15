@@ -27,8 +27,18 @@ export const config = {
   dataDir: path.resolve(ROOT, env("DATA_DIR", "data")),
 
   // LLM. Every AI feature has a deterministic fallback, so the app works without a key.
+  // Provider: NVIDIA NIM (OpenAI-compatible; DeepSeek by default) when NVIDIA_NIM_API_KEY is set, else Anthropic.
+  llmProvider: (env("LLM_PROVIDER") || (process.env.NVIDIA_NIM_API_KEY ? "nim" : "anthropic")) as "nim" | "anthropic",
   anthropicEnabled: Boolean(process.env.ANTHROPIC_API_KEY || process.env.ANTHROPIC_AUTH_TOKEN) && !bool("LLM_DISABLED", false),
-  model: env("LLM_MODEL", "claude-opus-5-5"),
+  nimEnabled: Boolean(process.env.NVIDIA_NIM_API_KEY) && !bool("LLM_DISABLED", false),
+  nimBaseUrl: env("NVIDIA_NIM_BASE_URL", "https://integrate.api.nvidia.com/v1").replace(/\/$/, ""),
+  model: env("LLM_MODEL", (env("LLM_PROVIDER") || (process.env.NVIDIA_NIM_API_KEY ? "nim" : "anthropic")) === "nim" ? "deepseek-ai/deepseek-v4.1-flash" : "claude-opus-5-5"),
+  /** NIM models tried in order when the main one is slow or down (comma-separated). */
+  fallbackModels: env("LLM_FALLBACK_MODELS", "nvidia/nemotron-3.5-lightning-30b-a3b").split(",").map((s) => s.trim()).filter(Boolean),
+  /** One model call's time limit; past it, the next model is tried (and AI features fall back to rules at the end). */
+  llmTimeoutMs: num("LLM_TIMEOUT_MS", 90000),
+  /** At most this many model requests at once (hosted free tiers rate-limit bursts). */
+  llmConcurrency: num("LLM_CONCURRENCY", 4),
 
   // Discovery
   pollIntervalMin: num("POLL_INTERVAL_MIN", 120),

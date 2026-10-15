@@ -11,7 +11,7 @@ import { config, paths, ROOT } from "./config.ts";
 import { seedCompanies } from "./ingest/companies.ts";
 import { startPoller } from "./ingest/poller.ts";
 import { backfillJobPlaces } from "./store.ts";
-import { llmEnabled } from "./llm.ts";
+import { llmEnabled, llmLabel } from "./llm.ts";
 import { mcp } from "./mcp.ts";
 import { mockAts, seedSandboxJobs } from "./mock/ats.ts";
 import { startMailSync } from "./mail/index.ts";
@@ -61,7 +61,7 @@ setMessagingEnqueue((id) => enqueue(id));
 setInterval(() => markGhosted(), 6 * 3600_000).unref();
 
 const server = serve({ fetch: app.fetch, port: config.port }, (info) => {
-  console.log(`${config.brand} API on http://localhost:${info.port}  ·  LLM ${llmEnabled() ? `on (${config.model})` : "off (heuristic fallbacks)"}  ·  real submit ${config.allowRealSubmit ? "ON" : "off (dry run)"}`);
+  console.log(`${config.brand} API on http://localhost:${info.port}  ·  LLM ${llmEnabled() ? `on (${llmLabel()})` : "off (heuristic fallbacks)"}  ·  real submit ${config.allowRealSubmit ? "ON" : "off (dry run)"}`);
 });
 
 for (const sig of ["SIGINT", "SIGTERM"] as const) {

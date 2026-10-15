@@ -17,6 +17,7 @@ Object.assign(process.env, {
   PUBLIC_URL: `http://localhost:${PORT}`,
   ANTHROPIC_API_KEY: "sk-ant-test",
   ANTHROPIC_BASE_URL: fake.url,
+  LLM_PROVIDER: "anthropic", // a NIM key in .env must not route this Anthropic-contract test to NVIDIA
   LLM_DISABLED: "false",
   HEADLESS: "true",
 });

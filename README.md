@@ -107,7 +107,7 @@ Everything above runs and is tested locally without external accounts. These key
 
 | Key | Unlocks | Without it |
 |---|---|---|
-| `ANTHROPIC_API_KEY` | Claude matching, tailoring rewrites, cover letters, open-ended answers, navigator | Rule-based answers. Essays go to "Needs you". |
+| `NVIDIA_NIM_API_KEY` (or `ANTHROPIC_API_KEY`) | AI matching, tailoring rewrites, cover letters, open-ended answers, navigator. With a NIM key Ferry uses DeepSeek v4.1 (`deepseek-ai/deepseek-v4.1-flash`) through NVIDIA's OpenAI-compatible API, falling back to `LLM_FALLBACK_MODELS` when it's slow; `LLM_PROVIDER=anthropic` switches to Claude | Rule-based answers. Essays go to "Needs you". |
 | `ALLOW_REAL_SUBMIT=true` | Submitting to real employers | Real forms are filled and stopped before Submit (dry run, no uploads) |
 | `RESEND_API_KEY` | Real outbound email | Mail goes to the local sandbox mailbox |
 | `GOOGLE_CLIENT_ID/SECRET` | One-click Gmail | Users can still connect any inbox with an IMAP app password |
@@ -186,7 +186,7 @@ The suite covers:
 - the answer library: fixed answers, per-job written answers, and the auto-write switch;
 - prompt-to-modify edits and the preview-before-applying pause;
 - the real-employer dry-run guarantee;
-- the Claude API contract, against a local fake of the Messages API;
+- the model contracts, against local fakes of the Anthropic Messages API and NVIDIA NIM's chat completions (fallback past stalled models, JSON repair);
 - password auth, sessions, magic links and reset;
 - signed Stripe webhooks;
 - Twilio signatures and the text-message conversation;
