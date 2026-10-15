@@ -514,6 +514,12 @@ export async function modifyResume(doc: ResumeDoc, prompt: string, job?: Job | n
     try {
       const plan = await llmModify(base, prompt, job);
       const r = applyOps(base, plan.ops);
+      // The model's ops changed nothing (or missed): the rules may still understand it ("move skills above experience").
+      if (!r.changes.length) {
+        const rules = interpretPrompt(base, prompt);
+        const rr = applyOps(base, rules.ops);
+        if (rr.changes.length) return { doc: rr.doc, changes: rr.changes, reply: rr.changes.length === 1 ? "Done." : `Made ${rr.changes.length} changes.`, warnings: [], method: "rules" };
+      }
       const invented = newNumbers(base, r.doc, prompt);
       const warnings = invented.length ? [`Check these numbers; they aren't in your résumé: ${invented.join(", ")}`] : [];
       // The reply is the model's account; this is what actually didn't happen.

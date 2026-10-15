@@ -41,7 +41,7 @@ export const config = {
   /** NIM models tried in order when the main one is slow or down (comma-separated). */
   fallbackModels: env("LLM_FALLBACK_MODELS", "nvidia/nemotron-3.5-lightning-30b-a3b").split(",").map((s) => s.trim()).filter(Boolean),
   /** One model call's time limit; past it, the next model is tried (and AI features fall back to rules at the end). */
-  llmTimeoutMs: num("LLM_TIMEOUT_MS", 90000),
+  llmTimeoutMs: num("LLM_TIMEOUT_MS", 120000),
   /** At most this many model requests at once (hosted free tiers rate-limit bursts). */
   llmConcurrency: num("LLM_CONCURRENCY", 4),
 

@@ -111,35 +111,73 @@ await check(
   },
 );
 
-// 3. Tailoring: rewritten for the job, same history, no invented numbers.
-const tailored = await check(
-  "tailoring (honest)",
-  () => tailorResume(doc, good, "honest"),
-  (t) => {
-    const key = (d: typeof doc) => d.experience.map((e) => `${e.company}|${e.title}|${e.start}|${e.end ?? ""}`).join("\n");
-    if (key(t.tailored) !== key(doc)) return `history changed:\n${key(t.tailored)}`;
-    const invented = newNumbers(doc, t.tailored, "");
-    if (invented.length) return `new numbers: ${invented.join(", ")}`;
-    // Nothing the posting says and the résumé doesn't ("Improved observability of fleet services").
-    const g = groundingFor(doc, good);
-    const lines: [string, Set<string> | undefined][] = [
-      [t.tailored.headline ?? "", undefined],
-      [t.tailored.summary ?? "", undefined],
-      ...t.tailored.experience.flatMap((e) => e.bullets.map((b): [string, Set<string>] => [b, roleWords(doc.experience.find((x) => x.id === e.id)!)])),
-    ];
-    const claims = lines.flatMap(([l, role]) => {
-      const c = borrowedClaims(l, g.source, g.job, "honest", role);
-      return c.length ? [`"${l}" (${c.join(", ")})`] : [];
-    });
-    if (claims.length) return `claims from the posting: ${claims.join("; ")}`;
+// 3. Tailoring: rewritten for the job, same history, no invented numbers, nothing only the posting says.
+type Tailored = Awaited<ReturnType<typeof tailorResume>>;
+function tailorProblem(t: Tailored, j: typeof good, mode: "honest" | "aggressive"): string | null {
+  const key = (d: typeof doc) => d.experience.map((e) => `${e.company}|${e.title}|${e.start}|${e.end ?? ""}`).join("\n");
+  if (key(t.tailored) !== key(doc)) return `history changed:\n${key(t.tailored)}`;
+  const invented = newNumbers(doc, t.tailored, "");
+  if (invented.length) return `new numbers: ${invented.join(", ")}`;
+  const g = groundingFor(doc, j);
+  const lines: [string, Set<string> | undefined][] = [
+    [t.tailored.headline ?? "", undefined],
+    [t.tailored.summary ?? "", undefined],
+    ...t.tailored.experience.flatMap((e) => e.bullets.map((b): [string, Set<string>] => [b, roleWords(doc.experience.find((x) => x.id === e.id)!)])),
+  ];
+  const claims = lines.flatMap(([l, role]) => {
+    const c = borrowedClaims(l, g.source, g.job, mode, role);
+    return c.length ? [`"${l}" (${c.join(", ")})`] : [];
+  });
+  if (claims.length) return `claims from the posting: ${claims.join("; ")}`;
+  if (mode === "honest") {
     const skills = t.tailored.skills.filter((k) => !g.text.toLowerCase().includes(k.toLowerCase()));
     if (skills.length) return `skills the résumé doesn't show: ${skills.join(", ")}`;
-    if (t.method !== "llm") return `method ${t.method}`;
-    if (!t.changes.length) return "nothing changed";
-    return null;
-  },
+  }
+  if (t.method !== "llm") return `method ${t.method}`;
+  return null;
+}
+const note = (t: Tailored | null) =>
+  t && console.log(`   ${t.changes.length} changes, ${t.held?.length ?? 0} rewrites refused for borrowing from the posting; ATS keyword score ${t.atsScore.before} → ${t.atsScore.after}`);
+
+note(await check("tailoring (honest)", () => tailorResume(doc, good, "honest"), (t) => tailorProblem(t, good, "honest") ?? (t.changes.length ? null : "nothing changed")));
+note(await check("tailoring (aggressive)", () => tailorResume(doc, good, "aggressive"), (t) => tailorProblem(t, good, "aggressive")));
+note(
+  await check(
+    "redo with instructions",
+    () => tailorResume(doc, good, "honest", { instructions: "Lead with my Kubernetes and infrastructure work" }),
+    (t) => {
+      const lead = `${t.tailored.summary ?? ""} ${t.tailored.experience[0]?.bullets[0] ?? ""}`;
+      return tailorProblem(t, good, "honest") ?? (/kubernetes|terraform|infrastructure/i.test(lead) ? null : `doesn't lead with it: ${lead.slice(0, 160)}`);
+    },
+  ),
 );
-if (tailored) console.log(`   ${tailored.changes.length} changes, ${tailored.held?.length ?? 0} rewrites refused for borrowing from the posting; ATS keyword score ${tailored.atsScore.before} → ${tailored.atsScore.after}`);
+
+// Real postings (QA_REAL_JOBS=10): engineering jobs from your job database, read-only; nothing is sent to employers.
+const realN = Number(process.env.QA_REAL_JOBS ?? 0);
+if (realN > 0) {
+  const { DatabaseSync } = await import("node:sqlite");
+  const live = new DatabaseSync(path.join(here, "../../../data/ferry.db"), { readOnly: true });
+  const rows = live
+    .prepare(
+      `SELECT * FROM jobs WHERE closed_at IS NULL AND length(description) BETWEEN 1500 AND 12000 AND title LIKE '%engineer%' AND rowid % 97 = ? LIMIT ?`,
+    )
+    .all(Math.floor(Math.random() * 97), realN) as Record<string, unknown>[];
+  live.close();
+  const jobs = rows.map((r) => job(String(r.title), String(r.company), String(r.description)));
+  await check(
+    `tailoring on ${jobs.length} real postings`,
+    () => Promise.all(jobs.map(async (j) => ({ j, t: await tailorResume(doc, j, "honest") }))),
+    (all) => {
+      const bad = all.flatMap(({ j, t }) => {
+        const p = tailorProblem(t, j, "honest");
+        return p ? [`${j.company} · ${j.title}: ${p}`] : [];
+      });
+      const held = all.reduce((n, { t }) => n + (t.held?.length ?? 0), 0);
+      console.log(`   ${all.map(({ j, t }) => `${j.company} (${t.changes.length} changes)`).join(", ")}; ${held} rewrites refused`);
+      return bad.length ? bad.join("\n   ") : null;
+    },
+  );
+}
 
 // 4. Cover letter: names the company, sensible length, no placeholders.
 await check(

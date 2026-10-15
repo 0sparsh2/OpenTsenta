@@ -108,7 +108,9 @@ partner collaborate contribute write make use ship launch operate optimize reduc
 team product customer user service system platform feature solution application project tool process experience year role company
 business engineer engineering software development environment quality performance high best practice cross functional stakeholder
 requirement code across within including strong ability senior junior staff principal full stack backend frontend end-to-end modern
-scalable reliable robust production large complex multiple various key core critical impact efficient effective`);
+scalable reliable robust production large complex multiple various key core critical impact efficient effective
+through into onto from with within without them they their these those this that than then there where when while what which
+before after during about above below between also very more most such each other over under using`);
 
 /** What the résumé and the posting each say, for borrowedClaims. */
 export function groundingFor(doc: ResumeDoc, job: Pick<Job, "title" | "description">) {
@@ -117,7 +119,7 @@ export function groundingFor(doc: ResumeDoc, job: Pick<Job, "title" | "descripti
 }
 
 /** Lexicon entries that name a way of working, not a tool: describing real work with them is terminology. */
-const PRACTICES = new Set(["distributed systems", "microservices", "system design", "ci/cd", "networking", "security", "serverless", "agile", "scrum", "observability", "testing", "leadership", "mentoring"]);
+const PRACTICES = new Set(["distributed systems", "microservices", "system design", "ci/cd", "networking", "security", "serverless", "agile", "scrum", "observability", "testing", "leadership", "mentoring", "stakeholder management", "technical writing", "communication", "debugging", "troubleshooting", "collaboration", "problem solving"]);
 
 /**
  * What a rewrite claims that only the posting says: a tool the résumé never mentions (honest mode), or two or more
