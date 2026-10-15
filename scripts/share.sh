@@ -58,6 +58,7 @@ cat <<EOF
 
   The address is new each time: in claude.ai → Settings → Connectors, update Ferry's URL if it changed.
   Sign in there with your Ferry email and password. Keep this window open; Ctrl+C stops sharing.
+  A brand-new address can take a minute to start working everywhere.
 
 EOF
 
