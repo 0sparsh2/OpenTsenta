@@ -48,6 +48,11 @@ export default function Login() {
   const [forgot, { isLoading: l4 }] = useForgotMutation();
   const enter = useEnterApp();
   const dev = cfg?.mode === "dev";
+  // A private Ferry (ALLOW_SIGNUPS=false): sign in only.
+  const closed = cfg?.signups === false;
+  useEffect(() => {
+    if (closed && mode === "signup") setMode("signin");
+  }, [closed, mode]);
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -87,8 +92,11 @@ export default function Login() {
 
   const titles = { signin: "Welcome back.", signup: "Create your account.", magic: "Sign in by email.", forgot: "Reset your password." };
   return (
-    <AuthShell title={dev ? "Welcome aboard." : titles[mode]} sub={dev ? "Sign in or create your account. Your first 25 applications are free." : mode === "signup" ? "Your first 25 applications are free. No card required." : undefined}>
-      {!dev && (mode === "signin" || mode === "signup") && (
+    <AuthShell
+      title={dev ? (closed ? "Welcome back." : "Welcome aboard.") : titles[mode]}
+      sub={closed ? "This Ferry is private. Sign in with your account." : dev ? "Sign in or create your account. Your first 25 applications are free." : mode === "signup" ? "Your first 25 applications are free. No card required." : undefined}
+    >
+      {!dev && !closed && (mode === "signin" || mode === "signup") && (
         <div className="mb-4 inline-flex rounded-lg border border-line bg-paper p-0.5">
           {(["signin", "signup"] as const).map((m) => (
             <button key={m} onClick={() => setMode(m)} className={cx("h-8 rounded-md px-4 text-[13px] font-medium", mode === m ? "bg-card shadow-card" : "text-muted")}>

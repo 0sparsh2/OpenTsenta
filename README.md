@@ -150,6 +150,17 @@ fly deploy
 Then in claude.ai, go to Settings → Connectors → Add custom connector and enter `https://<app>.fly.dev/api/v1/mcp`.
 Claude registers itself, you sign in to Ferry and approve, and the tools appear.
 
+**Free, from your Mac (Cloudflare Tunnel):** set a password in Settings → Security first, then:
+
+```bash
+cloudflared tunnel --url http://localhost:8787     # prints https://<random>.trycloudflare.com
+```
+
+In `.env`, set `AUTH_MODE=password`, `ALLOW_SIGNUPS=false` (only your account can sign in), and
+`PUBLIC_URL=https://<random>.trycloudflare.com`, then restart Ferry and add `<PUBLIC_URL>/api/v1/mcp` as the connector.
+It works while the Mac is awake. A quick tunnel gets a new address each time it starts, so you'll need to update
+`PUBLIC_URL` and the connector when it does; a named tunnel on your own domain keeps one address.
+
 The image signs in with passwords (`AUTH_MODE=password`). The server refuses to start in passwordless dev mode on a
 public `PUBLIC_URL`.
 

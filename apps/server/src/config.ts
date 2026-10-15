@@ -5,9 +5,10 @@ import { fileURLToPath } from "node:url";
 const here = path.dirname(fileURLToPath(import.meta.url));
 export const ROOT = path.resolve(here, "../../..");
 
-// Minimal .env loader so the server runs with `npm run dev` and no extra tooling.
+// Minimal .env loader so the server runs with `npm run dev` and no extra tooling. Tests (node --test sets
+// NODE_TEST_CONTEXT) don't read it: your local settings (closed sign-ups, a model key) mustn't change their results.
 const envFile = path.join(ROOT, ".env");
-if (fs.existsSync(envFile)) {
+if (fs.existsSync(envFile) && !process.env.NODE_TEST_CONTEXT) {
   for (const line of fs.readFileSync(envFile, "utf8").split("\n")) {
     const m = line.match(/^\s*([A-Z0-9_]+)\s*=\s*(.*)\s*$/);
     if (m && process.env[m[1]] === undefined) process.env[m[1]] = m[2].replace(/^["']|["']$/g, "");
@@ -72,6 +73,8 @@ export const config = {
 
   // Auth: "dev" = passwordless email sign-in (local use); "password" = passwords + email verification.
   authMode: env("AUTH_MODE", "dev") as "dev" | "password",
+  /** false = private instance: only existing accounts sign in (sign-up, dev login and email links create no one). */
+  allowSignups: bool("ALLOW_SIGNUPS", true),
   corsOrigins: env("CORS_ORIGINS", "").split(",").map((s) => s.trim()).filter(Boolean),
 
   // Outbound email (verification, magic links, notifications). Without a key, mail goes to the local mailbox.

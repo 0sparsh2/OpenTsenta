@@ -55,7 +55,7 @@ export const api = createApi({
   }),
   tagTypes: ["Me", "Bootstrap", "Jobs", "Applications", "Application", "Profile", "Settings", "Resumes", "Inbox", "Tracker", "Sources", "Wallet", "Mail", "Accounts", "Messaging", "Connections"],
   endpoints: (b) => ({
-    authConfig: b.query<{ mode: "dev" | "password"; brand: string }, void>({ query: () => "/auth/config" }),
+    authConfig: b.query<{ mode: "dev" | "password"; brand: string; signups?: boolean }, void>({ query: () => "/auth/config" }),
     login: b.mutation<{ token: string; user: Me }, { email: string; name?: string; password?: string }>({ query: (body) => ({ url: "/auth/login", method: "POST", body }) }),
     signup: b.mutation<{ token: string; user: Me }, { email: string; name?: string; password?: string }>({ query: (body) => ({ url: "/auth/signup", method: "POST", body }) }),
     magicLink: b.mutation<{ ok: boolean }, { email: string }>({ query: (body) => ({ url: "/auth/magic-link", method: "POST", body }) }),

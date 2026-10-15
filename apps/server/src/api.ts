@@ -79,13 +79,15 @@ async function sendVerification(user: User) {
 }
 const session = (c: Context, user: User) => c.json({ token: createSession(user.id, c.req.header("user-agent")), user: publicUser(getUser(user.id)!) });
 
-api.get("/auth/config", (c) => c.json({ mode: config.authMode, brand: config.brand }));
+api.get("/auth/config", (c) => c.json({ mode: config.authMode, brand: config.brand, signups: config.allowSignups }));
+const CLOSED = "This Ferry is private: sign-ups are closed.";
 
 api.post("/auth/signup", async (c) => {
   if (throttled(c, "signup", 10)) return bad(c, "Too many attempts. Try again in a few minutes.", 429 as 400);
   const b = z.object({ email: z.string().email(), password: z.string().optional(), name: z.string().optional() }).safeParse(await c.req.json().catch(() => ({})));
   if (!b.success) return bad(c, "A valid email is required");
   const email = b.data.email.toLowerCase();
+  if (!config.allowSignups && !getUserByEmail(email)) return bad(c, CLOSED, 403);
   if (config.authMode === "dev") return session(c, getUserByEmail(email) ?? createUser(email, b.data.name ?? ""));
   const problem = passwordProblem(b.data.password ?? "");
   if (problem) return bad(c, problem);
@@ -101,7 +103,11 @@ api.post("/auth/login", async (c) => {
   if (!b.success) return bad(c, "A valid email is required");
   const email = b.data.email.toLowerCase();
   if (throttled(c, `login:${email}`, 8)) return bad(c, "Too many attempts. Try again in a few minutes.", 429 as 400);
-  if (config.authMode === "dev") return session(c, getUserByEmail(email) ?? createUser(email, b.data.name ?? ""));
+  if (config.authMode === "dev") {
+    const existing = getUserByEmail(email);
+    if (!existing && !config.allowSignups) return bad(c, CLOSED, 403);
+    return session(c, existing ?? createUser(email, b.data.name ?? ""));
+  }
   const user = getUserByEmail(email);
   if (!user || !(await verifyPassword(b.data.password ?? "", passwordHashOf(user.id)))) return bad(c, "Wrong email or password", 401);
   return session(c, user);
@@ -112,7 +118,8 @@ api.post("/auth/magic-link", async (c) => {
   const b = z.object({ email: z.string().email() }).safeParse(await c.req.json().catch(() => ({})));
   if (!b.success) return bad(c, "A valid email is required");
   if (throttled(c, `magic:${b.data.email.toLowerCase()}`, 5)) return c.json({ ok: true });
-  const user = getUserByEmail(b.data.email) ?? createUser(b.data.email, "");
+  const user = getUserByEmail(b.data.email) ?? (config.allowSignups ? createUser(b.data.email, "") : null);
+  if (!user) return c.json({ ok: true }); // same answer either way: no account discovery
   const t = emailTemplates.magic(link("/auth/magic", issueToken(user.id, "magic_link", 20)));
   await sendEmail({ to: user.email, ...t }).catch((e) => console.warn("[mail] magic link:", (e as Error).message));
   return c.json({ ok: true });
