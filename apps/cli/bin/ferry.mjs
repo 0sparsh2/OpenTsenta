@@ -101,6 +101,7 @@ const help = `${c.bold("ferry")} — find matches, apply, and approve from your 
   ferry approve <app-id>         approve the paused step (or send)
   ferry inbox                    recent recruiter email
   ferry sweep                    poll every watched career page now
+  ferry mcp                      run as a stdio MCP server (Claude Desktop, Cursor…), bridging to your Ferry
 
   ${c.dim(`server: ${BASE}`)}`;
 
@@ -180,6 +181,10 @@ switch (cmd) {
     if (!msgs.length) console.log(c.dim("No job email yet."));
     break;
   }
+  case "mcp": {
+    await mcpBridge();
+    break;
+  }
   case "sweep": {
     await api("POST", "/sources/poll");
     console.log(c.green("Sweeping every watched career page…"));
@@ -187,4 +192,64 @@ switch (cmd) {
   }
   default:
     console.log(help);
+}
+
+/**
+ * stdio ⇄ Streamable HTTP bridge: MCP clients that launch local commands (Claude Desktop) speak newline-delimited
+ * JSON-RPC on stdin/stdout; each message is posted to Ferry's /api/v1/mcp with your token and the reply written back.
+ * Nothing but protocol messages goes to stdout (logs go to stderr).
+ */
+async function mcpBridge() {
+  if (!TOKEN) {
+    process.stderr.write("ferry mcp: no token. Run `ferry login <email>` or `ferry token <api-token>`, or set FERRY_TOKEN.\n");
+    process.exit(1);
+  }
+  const send = (msg) => process.stdout.write(`${JSON.stringify(msg)}\n`);
+  const fail = (id, message) => id != null && send({ jsonrpc: "2.0", id, error: { code: -32603, message } });
+  const forward = async (line) => {
+    let msg;
+    try {
+      msg = JSON.parse(line);
+    } catch {
+      return send({ jsonrpc: "2.0", id: null, error: { code: -32700, message: "Parse error" } });
+    }
+    try {
+      const res = await fetch(`${BASE}/api/v1/mcp`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${TOKEN}`, "Content-Type": "application/json", Accept: "application/json, text/event-stream" },
+        body: JSON.stringify(msg),
+      });
+      if (res.status === 202 || res.status === 204) return; // a notification: nothing to send back
+      const body = await res.text();
+      if (!res.ok) return fail(msg.id, `Ferry returned ${res.status}: ${body.slice(0, 200)}`);
+      if ((res.headers.get("content-type") ?? "").includes("text/event-stream")) {
+        for (const ev of body.split("\n\n")) {
+          const data = ev
+            .split("\n")
+            .filter((l) => l.startsWith("data:"))
+            .map((l) => l.slice(5).trim())
+            .join("");
+          if (data) process.stdout.write(`${data}\n`);
+        }
+      } else if (body.trim()) process.stdout.write(`${body.trim()}\n`);
+    } catch (e) {
+      fail(msg.id, `Can't reach Ferry at ${BASE}: ${e.message}`);
+    }
+  };
+  // Requests run concurrently (wait_for_updates can take most of a minute).
+  let buf = "";
+  const pending = new Set();
+  process.stdin.setEncoding("utf8");
+  process.stdin.on("data", (chunk) => {
+    buf += chunk;
+    for (let i = buf.indexOf("\n"); i >= 0; i = buf.indexOf("\n")) {
+      const line = buf.slice(0, i).trim();
+      buf = buf.slice(i + 1);
+      if (!line) continue;
+      const p = forward(line).finally(() => pending.delete(p));
+      pending.add(p);
+    }
+  });
+  await new Promise((resolve) => process.stdin.on("end", resolve));
+  await Promise.all(pending);
 }

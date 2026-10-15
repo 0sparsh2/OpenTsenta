@@ -5,7 +5,7 @@ import { streamSSE } from "hono/streaming";
 import { z } from "zod";
 import { ATS_LIST, atsName, detectAts, parseJobUrl } from "./ats.ts";
 import { subscribe } from "./bus.ts";
-import { config, paths } from "./config.ts";
+import { config, paths, ROOT } from "./config.ts";
 import { all, one, parse, run, uid } from "./db.ts";
 import { addCompany, listCompanies } from "./ingest/companies.ts";
 import { resolveJob } from "./ingest/jd.ts";
@@ -19,6 +19,8 @@ import { matchJobsForUser, rematchUser, saveMatch } from "./match/score.ts";
 import { cancel, enqueue, queueStatus } from "./apply/queue.ts";
 import { resumes } from "./routes/resumes.ts";
 import { extension } from "./routes/extension.ts";
+import { agent } from "./routes/agent.ts";
+import { oauthApi, oauthUser } from "./oauth.ts";
 import { pickProfile } from "./resume/profiles.ts";
 import {
   createApplication,
@@ -167,7 +169,10 @@ api.route("/webhooks", webhooks);
 api.use("*", async (c, next) => {
   const h = c.req.header("authorization");
   const token = h?.startsWith("Bearer ") ? h.slice(7) : c.req.query("token");
-  const user = token ? userForToken(token) : undefined;
+  // OAuth access tokens (MCP clients): a read-only connection may look but not change anything.
+  const viaOAuth = token ? oauthUser(token) : null;
+  if (viaOAuth && !viaOAuth.scopes.has("jobs:apply") && c.req.method !== "GET") return bad(c, "This connection is read-only (jobs:read). Reconnect with the jobs:apply permission to act.", 403);
+  const user = viaOAuth?.user ?? (token ? userForToken(token) : undefined);
   if (!user) return bad(c, "Unauthorized", 401);
   c.set("user", user);
   await next();
@@ -213,7 +218,9 @@ const publicUser = (u: User) => ({
 
 api.get("/me", (c) => {
   const u = c.get("user");
-  return c.json({ ...publicUser(u), token: u.token, llm: llmEnabled(), allowRealSubmit: config.allowRealSubmit, brand: config.brand, authMode: config.authMode });
+  // In local mode, where the CLI lives (Claude Desktop runs `node <cliPath> mcp`; `npx ferry` would fetch an unrelated package).
+  const cliPath = config.authMode === "dev" ? path.join(ROOT, "apps/cli/bin/ferry.mjs") : undefined;
+  return c.json({ ...publicUser(u), token: u.token, llm: llmEnabled(), allowRealSubmit: config.allowRealSubmit, brand: config.brand, authMode: config.authMode, cliPath });
 });
 
 // ---------- realtime ----------
@@ -275,6 +282,8 @@ api.patch("/settings", async (c) => c.json(updateSettings(c.get("user").id, awai
 // Résumé profiles, previews, tailored résumés and the answer library live in routes/resumes.ts.
 api.route("/", resumes);
 api.route("/", extension);
+api.route("/", agent);
+api.route("/", oauthApi);
 
 api.post("/onboarding/complete", (c) => {
   const u = c.get("user");
@@ -554,7 +563,7 @@ api.get("/applications/queue", (c) => c.json(queueStatus()));
 
 api.post("/applications", async (c) => {
   const u = c.get("user");
-  const body = (await c.req.json().catch(() => ({}))) as { jobId?: string; url?: string; resumeId?: string; source?: string; description?: string; title?: string; company?: string; previewResume?: boolean };
+  const body = (await c.req.json().catch(() => ({}))) as { jobId?: string; url?: string; resumeId?: string; source?: string; description?: string; title?: string; company?: string; previewResume?: boolean; notes?: string };
   if (!getDefaultResume(u.id)) return bad(c, "Upload a résumé first", 409);
   if (u.credits <= 0) return bad(c, "You're out of application credits", 402);
   let jobId = body.jobId;
@@ -562,6 +571,8 @@ api.post("/applications", async (c) => {
   if (!jobId || !getJob(jobId)) return bad(c, "Unknown job", 404);
   const { app, created } = createApplication(u.id, jobId, body.source ?? "dashboard", chooseProfile(u, jobId, body.resumeId));
   if (created && typeof body.previewResume === "boolean") patchApplication(app.id, { reviewResume: body.previewResume });
+  // Notes for this job ("lead with the payments work") steer tailoring and written answers.
+  if (created && body.notes?.trim()) patchApplication(app.id, { tailorInstructions: body.notes.trim().slice(0, 4000) });
   enqueue(app.id);
   return c.json(appView(getApplication(app.id)!));
 });

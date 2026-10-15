@@ -23,10 +23,13 @@ function AuthShell({ title, sub, children }: { title: string; sub?: React.ReactN
 
 function useEnterApp() {
   const nav = useNavigate();
+  const loc = useLocation();
+  // Back to the page that asked you to sign in (an OAuth consent screen, a deep link), if it was one of ours.
+  const from = (loc.state as { from?: string } | null)?.from;
   return (r: { token: string; user: Me }) => {
     setToken(r.token);
     store.dispatch(api.util.resetApiState());
-    nav(r.user.onboarded ? "/app" : "/welcome");
+    nav(from && from.startsWith("/") && !from.startsWith("//") ? from : r.user.onboarded ? "/app" : "/welcome");
   };
 }
 

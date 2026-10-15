@@ -253,6 +253,14 @@ addColumn("applications", "review_resume", "INTEGER");
 addColumn("ats_accounts", "password_kind", "TEXT NOT NULL DEFAULT 'generated'");
 // Per-board polling schedule: big paged boards less often, failing boards back off.
 addColumn("companies", "next_poll_at", "TEXT");
+// OAuth for MCP clients (oauth.ts): registered apps, one-time codes, and access/refresh tokens (stored hashed).
+db.exec(`CREATE TABLE IF NOT EXISTS mcp_oauth_clients (id TEXT PRIMARY KEY, name TEXT NOT NULL, redirect_uris TEXT NOT NULL, created_at TEXT NOT NULL DEFAULT (datetime('now')));
+CREATE TABLE IF NOT EXISTS mcp_oauth_codes (code_hash TEXT PRIMARY KEY, client_id TEXT NOT NULL, user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE, redirect_uri TEXT NOT NULL, challenge TEXT NOT NULL, scope TEXT NOT NULL, expires_at TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS mcp_oauth_tokens (id TEXT PRIMARY KEY, access_hash TEXT UNIQUE NOT NULL, refresh_hash TEXT UNIQUE NOT NULL, client_id TEXT NOT NULL, user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE, scope TEXT NOT NULL, expires_at TEXT NOT NULL, refresh_expires_at TEXT NOT NULL, created_at TEXT NOT NULL DEFAULT (datetime('now')));`);
+// Batches: a list of jobs an agent (MCP, CLI) handed over in one go.
+addColumn("applications", "batch_id", "TEXT");
+db.exec(`CREATE TABLE IF NOT EXISTS batches (id TEXT PRIMARY KEY, user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE, items TEXT NOT NULL DEFAULT '[]', created_at TEXT NOT NULL DEFAULT (datetime('now')));
+CREATE INDEX IF NOT EXISTS applications_batch ON applications(batch_id) WHERE batch_id IS NOT NULL;`);
 addColumn("companies", "fail_count", "INTEGER NOT NULL DEFAULT 0");
 // A hash of what the board says about a job: unchanged jobs aren't rewritten on every poll.
 addColumn("jobs", "content_hash", "TEXT");

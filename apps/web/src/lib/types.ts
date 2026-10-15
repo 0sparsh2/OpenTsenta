@@ -23,6 +23,8 @@ export interface Me {
   emailVerified: boolean;
   hasPassword: boolean;
   authMode: "dev" | "password";
+  /** Local mode: where the CLI is, for the Claude Desktop config. */
+  cliPath?: string;
   name: string | null;
   plan: string;
   credits: number;

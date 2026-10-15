@@ -53,7 +53,7 @@ export const api = createApi({
       return h;
     },
   }),
-  tagTypes: ["Me", "Bootstrap", "Jobs", "Applications", "Application", "Profile", "Settings", "Resumes", "Inbox", "Tracker", "Sources", "Wallet", "Mail", "Accounts", "Messaging"],
+  tagTypes: ["Me", "Bootstrap", "Jobs", "Applications", "Application", "Profile", "Settings", "Resumes", "Inbox", "Tracker", "Sources", "Wallet", "Mail", "Accounts", "Messaging", "Connections"],
   endpoints: (b) => ({
     authConfig: b.query<{ mode: "dev" | "password"; brand: string }, void>({ query: () => "/auth/config" }),
     login: b.mutation<{ token: string; user: Me }, { email: string; name?: string; password?: string }>({ query: (body) => ({ url: "/auth/login", method: "POST", body }) }),
@@ -193,6 +193,13 @@ export const api = createApi({
       query: (body) => ({ url: "/sources", method: "POST", body }),
       invalidatesTags: ["Sources", "Jobs"],
     }),
+    oauthClient: b.query<{ client_id: string; name: string; redirect_hosts: string[] }, string>({ query: (id) => `/oauth/client?client_id=${encodeURIComponent(id)}` }),
+    oauthApprove: b.mutation<{ redirect: string }, { client_id: string; redirect_uri: string; code_challenge: string; scope?: string; state?: string; allow: boolean }>({
+      query: (body) => ({ url: "/oauth/approve", method: "POST", body }),
+      invalidatesTags: ["Connections"],
+    }),
+    oauthConnections: b.query<{ client_id: string; name: string; scope: string; connected_at: string }[], void>({ query: () => "/oauth/connections", providesTags: ["Connections"] }),
+    oauthDisconnect: b.mutation<void, string>({ query: (id) => ({ url: `/oauth/connections/${encodeURIComponent(id)}`, method: "DELETE" }), invalidatesTags: ["Connections"] }),
     pollNow: b.mutation<void, void>({ query: () => ({ url: "/sources/poll", method: "POST" }), invalidatesTags: ["Sources"] }),
 
     mail: b.query<{ gmail: boolean; imap: boolean; local: boolean; gmailConfigured: boolean; imapUser: string | null; imapHost: string | null; lastSync: string | null }, void>({ query: () => "/integrations/mail", providesTags: ["Mail"] }),
@@ -329,6 +336,10 @@ export const {
   useGmailSyncMutation,
   useSourcesQuery,
   useAddSourceMutation,
+  useOauthClientQuery,
+  useOauthApproveMutation,
+  useOauthConnectionsQuery,
+  useOauthDisconnectMutation,
   useJobLocationsQuery,
   usePollNowMutation,
   usePlansQuery,

@@ -63,7 +63,7 @@ and the confirmation email land in your inbox and move the tracker.
 | iOS / Android apps | Capacitor projects (`apps/mobile/ios`, `android`) with native push through FCM | `apps/mobile` |
 | iMessage / WhatsApp / SMS | Sendblue (iMessage) and Twilio (SMS, WhatsApp): match alerts, YES/SKIP/MATCHES/APPLY n/STATUS, phone OTP | `messaging.ts` |
 | Chrome extension | MV3: job detection panel, dashboard auth bridge, "Fill this form" in your own tab for bot-protected sites | `apps/extension` |
-| MCP server at `/api/v1/mcp` | Streamable HTTP, 9 tools | `mcp.ts` |
+| MCP server at `/api/v1/mcp` | Streamable HTTP, 19 tools: apply to a list of jobs as a batch, follow progress, answer Ferry's questions from the chat, approve, set up the profile from the conversation. OAuth 2.1 (PKCE, scopes `jobs:read` / `jobs:apply`) or an API token; `ferry mcp` for stdio clients | `mcp.ts`, `oauth.ts`, `routes/agent.ts` |
 | CLI | `npx ferry …` | `apps/cli` |
 | Accounts | Password + email verification, magic links, reset, sessions, API tokens, rate limits | `session.ts` |
 | Billing | Stripe Checkout subscriptions, portal, signed idempotent webhooks, 30-day credit cycles | `billing.ts` |
@@ -147,11 +147,29 @@ the database is SQLite on a volume, and the watcher and apply queue run in-proce
 
 ## Connect
 
-**MCP (Claude Code):**
+**MCP.** Hand Ferry a job link or a whole list from Claude, and it applies with your profile, asks you what it can't
+answer, and waits for your approval before submitting.
 
-```bash
-claude mcp add --transport http ferry http://localhost:8787/api/v1/mcp --header "Authorization: Bearer <api-token>"
-```
+- Claude Code (signs in with OAuth in your browser; no token to paste):
+
+  ```bash
+  claude mcp add --transport http ferry http://localhost:8787/api/v1/mcp
+  ```
+
+- Claude Desktop, Cursor and other clients that launch a local command (`claude_desktop_config.json`; Settings → MCP shows
+  this with your path and token filled in):
+
+  ```json
+  { "mcpServers": { "ferry": { "command": "node", "args": ["/path/to/Ferry/apps/cli/bin/ferry.mjs", "mcp"], "env": { "FERRY_URL": "http://localhost:8787", "FERRY_TOKEN": "<api-token>" } } } }
+  ```
+
+- claude.ai: add a custom connector with `https://<your-ferry>/api/v1/mcp` once Ferry is reachable over HTTPS (OAuth
+  connects it).
+
+Then ask: *"Apply to these: <links>"*, *"What does Ferry need from me?"*, *"Approve the ones that are ready."*
+Tools: `apply_to_jobs`, `get_batch`, `approve_batch`, `wait_for_updates`, `pending_questions`, `answer_questions`,
+`import_resume`, `update_profile`, `set_answers`, `list_profiles`, plus matches, search, applications, inbox, and profile.
+A read-only connection (`jobs:read`) sees everything but changes nothing; Settings lists connected apps and disconnects them.
 
 **CLI:**
 
@@ -168,7 +186,7 @@ Or use `npx ferry token <api-token>`. Then run `ferry matches`, `ferry apply <jo
 ## Tests and tools
 
 ```bash
-npm test                                                  # 46 end-to-end + integration tests, no network or keys needed
+npm test                                                  # 54 end-to-end + integration tests, no network or keys needed
 npx tsx apps/server/scripts/inspect-form.ts <job-url>     # read-only: the fields the agent would see on a real form
 npx tsx apps/server/scripts/inspect-workday.ts <url>      # read-only: walk a real Workday posting to its sign-in step
 npx tsx apps/server/scripts/inspect-apply.ts <url>        # read-only: follow Apply on any posting to its form or sign-in wall
@@ -198,6 +216,6 @@ The suite covers:
 Tsenta runs AdonisJS + Postgres/pgvector on Fly.io, Firebase Auth, a Vite + React + RTK Query dashboard, a WXT
 extension, and native apps. Ferry keeps the same shape but is lighter so it runs anywhere with one command:
 
-- **Server:** Hono + `node:sqlite`, Playwright, the Anthropic TypeScript SDK, the MCP TypeScript SDK, Stripe, web-push, imapflow.
+- **Server:** Hono + `node:sqlite`, Playwright, NVIDIA NIM (DeepSeek v4.1) or the Anthropic TypeScript SDK, the MCP TypeScript SDK, Stripe, web-push, imapflow.
 - **Web:** Vite + React 19 + Tailwind 4 + RTK Query.
 - **Mobile:** Capacitor.

@@ -14,7 +14,7 @@ export function RequireAuth() {
   const { data: me, isLoading, isError } = useMeQuery(undefined, { skip: !token });
   if (!token || isError) {
     if (isError) setToken(null);
-    return <Navigate to="/login" replace state={{ from: loc.pathname }} />;
+    return <Navigate to="/login" replace state={{ from: loc.pathname + loc.search }} />;
   }
   if (isLoading || !me) {
     return (

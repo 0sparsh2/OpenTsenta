@@ -13,6 +13,7 @@ import { startPoller } from "./ingest/poller.ts";
 import { backfillJobPlaces } from "./store.ts";
 import { llmEnabled, llmLabel } from "./llm.ts";
 import { mcp } from "./mcp.ts";
+import { oauth } from "./oauth.ts";
 import { mockAts, seedSandboxJobs } from "./mock/ats.ts";
 import { startMailSync } from "./mail/index.ts";
 import { setMessagingEnqueue } from "./messaging.ts";
@@ -34,6 +35,7 @@ app.use("/api/*", cors({ origin: (o) => (!config.corsOrigins.length || !o || con
 app.get("/healthz", (c) => c.json({ ok: true, brand: config.brand, llm: llmEnabled() }));
 
 // MCP first so the REST auth middleware never sees it.
+app.route("/", oauth); // /.well-known/oauth-*, /oauth/authorize, /oauth/token, /oauth/register
 app.route("/api/v1/mcp", mcp);
 app.route("/api/v1", api);
 app.route("/mock-ats", mockAts);

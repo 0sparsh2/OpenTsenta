@@ -2,7 +2,7 @@ import { useState } from "react";
 import { useSearchParams } from "react-router";
 import { AccountsSettings, BillingSettings, EmailSettings, MessagingSettings, SecuritySettings } from "./settings-extra";
 import { Check, Copy, Globe, Plug, RefreshCw, Terminal, Zap } from "lucide-react";
-import { errorMessage, useAddSourceMutation, useCheckoutMutation, useMeQuery, usePlansQuery, usePollNowMutation, useSaveSettingsMutation, useSettingsQuery, useSourcesQuery, useWalletQuery } from "../lib/api";
+import { errorMessage, useAddSourceMutation, useOauthConnectionsQuery, useOauthDisconnectMutation, useCheckoutMutation, useMeQuery, usePlansQuery, usePollNowMutation, useSaveSettingsMutation, useSettingsQuery, useSourcesQuery, useWalletQuery } from "../lib/api";
 import { PageHeader } from "../components/AppLayout";
 import { toast } from "../components/toast";
 import { Badge, Button, Card, cx, Input, Label, SectionTitle, Segmented, Spinner, Tabs, timeAgo, Toggle } from "../components/ui";
@@ -139,6 +139,36 @@ function Sources() {
   );
 }
 
+/** Apps connected over OAuth (Claude Desktop, claude.ai…), with what each may do, and a way to cut them off. */
+function ConnectedApps() {
+  const { data } = useOauthConnectionsQuery();
+  const [disconnect] = useOauthDisconnectMutation();
+  if (!data?.length) return null;
+  return (
+    <div className="mt-5">
+      <Label>Connected apps</Label>
+      <div className="divide-y divide-line rounded-lg border border-line">
+        {data.map((a) => (
+          <div key={a.client_id} className="flex items-center justify-between gap-3 px-3 py-2 text-[13px]">
+            <span>
+              <span className="font-semibold">{a.name}</span> <span className="text-muted">· {a.scope.includes("jobs:apply") ? "can act for you" : "read-only"} · since {timeAgo(a.connected_at)}</span>
+            </span>
+            <Button
+              size="sm"
+              onClick={async () => {
+                await disconnect(a.client_id);
+                toast(`Disconnected ${a.name}`, "success");
+              }}
+            >
+              Disconnect
+            </Button>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function Connect() {
   const { data: me } = useMeQuery();
   const origin = window.location.origin.replace(":5173", ":8787");
@@ -147,17 +177,27 @@ function Connect() {
     <div className="grid grid-cols-1 gap-5 lg:grid-cols-2">
       <Card className="p-5">
         <SectionTitle title={<span className="flex items-center gap-2"><Plug className="h-4 w-4" /> MCP server</span>} sub="Run your job search from Claude Code, Claude Desktop, Cursor, or any MCP client." />
-        <Label>Claude Code</Label>
-        <CopyBlock text={`claude mcp add --transport http ferry ${origin}/api/v1/mcp \\\n  --header "Authorization: Bearer ${token}"`} />
-        <p className="mt-3 mb-1.5 text-[13px] text-muted">Then ask: "find new roles that fit me and apply to the top three."</p>
+        <Label>Claude Code (signs in with OAuth; no token to paste)</Label>
+        <CopyBlock text={`claude mcp add --transport http ferry ${origin}/api/v1/mcp`} />
+        <div className="mt-3" />
+        <Label>Claude Desktop (claude_desktop_config.json)</Label>
+        <CopyBlock
+          text={JSON.stringify({ mcpServers: { ferry: { command: "node", args: [me?.cliPath ?? "/path/to/Ferry/apps/cli/bin/ferry.mjs", "mcp"], env: { FERRY_URL: origin, FERRY_TOKEN: token } } } }, null, 2)}
+        />
+        <p className="mt-2 text-[12.5px] text-muted">
+          claude.ai: add a custom connector with <span className="font-mono">{origin}/api/v1/mcp</span> once Ferry is reachable over HTTPS. Or pass your token directly:{" "}
+          <span className="font-mono">--header "Authorization: Bearer …"</span>.
+        </p>
+        <p className="mt-3 mb-1.5 text-[13px] text-muted">Then ask: "apply to these links", "what does Ferry need from me?", or "find new roles that fit me and apply to the top three."</p>
         <Label>Tools</Label>
         <div className="flex flex-wrap gap-1.5">
-          {["get_job_matches", "search_jobs", "add_job_by_url", "apply_to_job", "list_applications", "get_application", "approve_application", "inbox", "get_profile"].map((t) => (
+          {["get_job_matches", "search_jobs", "add_job_by_url", "apply_to_job", "apply_to_jobs", "get_batch", "approve_batch", "wait_for_updates", "pending_questions", "answer_questions", "list_applications", "get_application", "approve_application", "list_profiles", "import_resume", "update_profile", "set_answers", "inbox", "get_profile"].map((t) => (
             <Badge key={t} className="font-mono text-[11px]">
               {t}
             </Badge>
           ))}
         </div>
+        <ConnectedApps />
       </Card>
       <Card className="p-5">
         <SectionTitle title={<span className="flex items-center gap-2"><Terminal className="h-4 w-4" /> CLI</span>} sub="Same agent from your terminal." />

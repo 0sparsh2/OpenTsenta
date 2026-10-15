@@ -10,6 +10,7 @@ import Landing from "./pages/Landing";
 import Login, { AuthAction } from "./pages/Login";
 // Dashboard screens load on demand so the landing page stays light.
 const Dashboard = lazy(() => import("./pages/Dashboard"));
+const OAuthConsent = lazy(() => import("./pages/OAuthConsent"));
 const Jobs = lazy(() => import("./pages/Jobs"));
 const Applications = lazy(() => import("./pages/Applications"));
 const ApplicationDetail = lazy(() => import("./pages/ApplicationDetail"));
@@ -34,6 +35,7 @@ createRoot(document.getElementById("root")!).render(
           <Route path="/auth/magic" element={<AuthAction kind="magic" />} />
           <Route path="/auth/reset" element={<AuthAction kind="reset" />} />
           <Route element={<RequireAuth />}>
+            <Route path="/oauth/consent" element={<OAuthConsent />} />
             <Route path="/welcome" element={<Onboarding />} />
             <Route path="/app" element={<AppLayout />}>
               <Route index element={<Dashboard />} />
