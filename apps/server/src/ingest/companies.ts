@@ -2,9 +2,9 @@ import fs from "node:fs";
 import { fileURLToPath } from "node:url";
 import { all, run, uid } from "../db.ts";
 
-// Seed boards: every entry was verified live against its ATS's public API by
-// scripts/discover-boards.ts (re-run it to refresh or grow the list). Users can add any board
-// from the dashboard (Settings → Career pages) or POST /api/v1/sources.
+// Seed boards: every entry was verified live against its ATS's public API by scripts/mine-boards.ts
+// (job lists, company directories, Common Crawl, AI Dev Jobs; re-run it to grow the list). Users can add
+// any board from the dashboard (Settings → Career pages) or POST /api/v1/sources.
 export const SEED_COMPANIES: { name: string; ats: string; board: string }[] = JSON.parse(
   fs.readFileSync(fileURLToPath(new URL("./boards.json", import.meta.url)), "utf8"),
 );

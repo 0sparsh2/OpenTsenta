@@ -14,7 +14,7 @@ find ──▶ prep ──▶ apply ──▶ track
  │        │        └ Playwright agent: account wall (sign in / create + email-code verify) → fields → profile rules,
  │        │          memory, Claude → fill → read-back → review gate → submit → confirmation
  │        └ per-role résumé rewrite (diff + ATS keyword score), cover letter, ATS-safe PDF
- └ 4,632 company boards on Greenhouse · Ashby · Lever · Workday · iCIMS · Oracle Recruiting · SuccessFactors · Taleo · SmartRecruiters · Workable · Rippling · Pinpoint · BambooHR · Breezy HR · Recruitee
+ └ 11,256 company boards on Greenhouse · Ashby · Lever · Workday · iCIMS · Oracle Recruiting · SuccessFactors · Taleo · SmartRecruiters · Workable · Rippling · Pinpoint · BambooHR · Breezy HR · Recruitee
 ```
 
 ## Quick start
@@ -27,7 +27,7 @@ npm start                         # http://localhost:8787
 ```
 
 Sign in with any email, upload a résumé (`samples/alex_morgan_resume.txt` works), and finish onboarding.
-The watcher covers about 250,000 open roles posted in the last two weeks (JOB_RETENTION_DAYS) from 4,631 company boards. A full pass takes about 30 minutes; big paged boards (Workday, iCIMS…) refresh twice a day, the rest every two hours.
+The watcher covers over 300,000 open roles posted in the last two weeks (JOB_RETENTION_DAYS) from 11,256 company boards. Big paged boards (Workday, iCIMS…) refresh twice a day, the rest every two hours.
 
 To work on the UI with hot reload, run `npm run dev` (API on :8787, Vite on :5173).
 
@@ -45,7 +45,7 @@ and the confirmation email land in your inbox and move the tracker.
 
 | Tsenta surface | Ferry | Where |
 |---|---|---|
-| Career-page watcher | 15 ATS feeds, 4,632 verified company boards (mined from public job lists by `scripts/mine-boards.ts`), add any company from its careers link, per-board polling schedule with back-off, lazy descriptions | `apps/server/src/ingest` |
+| Career-page watcher | 15 ATS feeds, 11,256 verified company boards (mined by `scripts/mine-boards.ts` from public job lists, company directories, Common Crawl's URL index and AI Dev Jobs), add any company from its careers link, per-board polling schedule with back-off, lazy descriptions | `apps/server/src/ingest` |
 | Job search | Keywords with AND / OR / "phrases" / -exclusions / (groups) / prefix* over titles or descriptions (SQLite FTS5, stemmed), a plain-English readout of the query, and a location filter that buckets messy locations into cities, metros, states, countries and remote | `match/query.ts`, `ingest/places.ts`, `pages/Jobs.tsx` |
 | Résumé-aware matching | Heuristic pre-score (title, skills, level, location, work authorization, sponsorship), then Claude on the top results | `apps/server/src/match` |
 | Résumé profiles | One profile per role family ("Backend Engineer", "Data Engineer"), each imported from a résumé or copied; every job is matched and applied with the best-fitting one | `resume/profiles.ts`, Résumé profiles page |
@@ -216,7 +216,7 @@ npx tsx apps/server/scripts/inspect-form.ts <job-url>     # read-only: the field
 npx tsx apps/server/scripts/inspect-workday.ts <url>      # read-only: walk a real Workday posting to its sign-in step
 npx tsx apps/server/scripts/inspect-apply.ts <url>        # read-only: follow Apply on any posting to its form or sign-in wall
 npx tsx apps/server/scripts/coverage.ts --ats ashby --per 6   # dry-run sweep of real postings, report per ATS
-npx tsx apps/server/scripts/mine-boards.ts                # grow the watch list from public job lists (verifies every board live)
+npx tsx apps/server/scripts/mine-boards.ts --all          # grow the watch list: job lists, company directories, Common Crawl, AI Dev Jobs, careers pages (verifies every board live)
 npx tsx apps/server/scripts/test-extension.ts             # loads the Chrome extension in Chromium and drives the panel
 ```
 

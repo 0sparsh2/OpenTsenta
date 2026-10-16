@@ -220,7 +220,7 @@ await check(
   (r) => {
     if (r.method !== "llm") return `method ${r.method}`;
     if (!r.changes.length) return `no edits: ${r.reply}`;
-    const order = r.doc.layout.sectionOrder;
+    const order = r.doc.layout?.sectionOrder ?? [];
     if (order.indexOf("skills") > order.indexOf("experience")) return `skills still after experience: ${order.join(", ")}`;
     return r.warnings.length ? `warnings: ${r.warnings.join("; ")}` : null;
   },
