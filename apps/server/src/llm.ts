@@ -173,9 +173,12 @@ async function slot<T>(fn: () => Promise<T>): Promise<T> {
 /** Try the main model, then the fallbacks; a model that fails rests for five minutes. */
 async function nimChat(system: string, prompt: string | ChatMessage[], opts: { maxTokens?: number; effort?: Effort; json?: boolean } = {}): Promise<string> {
   const messages: ChatMessage[] = [{ role: "system", content: system }, ...(typeof prompt === "string" ? [{ role: "user" as const, content: prompt }] : prompt)];
-  const first = opts.effort === "low" && config.fastModel ? [config.fastModel, config.model] : [config.model];
-  const models = [...new Set([...first, ...config.fallbackModels])];
+  // Quick tasks (match scores, inbox sorting) all have rule-based fallbacks, so they never wait on the slower main
+  // model: if the quick models are busy, the caller falls back at once.
+  const quick = opts.effort === "low" && Boolean(config.fastModel);
+  const models = quick ? [...new Set([config.fastModel, ...config.fallbackModels.filter((m) => m !== config.model)])] : [...new Set([config.model, ...config.fallbackModels])];
   const awake = models.filter((m) => (resting.get(m) ?? 0) < Date.now());
+  if (quick && !awake.length) throw new LlmUnavailable("quick models are resting");
   let last: Error | null = null;
   for (const model of awake.length ? awake : models) {
     try {
@@ -185,7 +188,8 @@ async function nimChat(system: string, prompt: string | ChatMessage[], opts: { m
     } catch (e) {
       last = e as Error;
       if (/credentials/.test(last.message)) throw last;
-      resting.set(model, Date.now() + 5 * 60_000);
+      // Rate limits clear in a minute; a model that timed out or failed rests longer.
+      resting.set(model, Date.now() + (/API error 429/.test(last.message) ? 60_000 : 5 * 60_000));
       console.warn(`[llm] ${last.message}; trying the next model`);
     }
   }

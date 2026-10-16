@@ -46,6 +46,9 @@ const server = http.createServer((req, res) => {
       case "down":
         res.writeHead(503).end("busy");
         return;
+      case "limited":
+        res.writeHead(429).end('{"status":429,"title":"Too Many Requests"}');
+        return;
       case "sloppy":
         // JSON in a code fence after some prose; the first reply misses a required field, the repair turn fixes it.
         if (!schema) return reply("Hi there.");
@@ -131,6 +134,26 @@ test("quick tasks go to the fast model first; writing stays on the main one", as
   seen.length = 0;
   await text({ system: "Write.", prompt: "A letter.", effort: "medium" });
   assert.notEqual(seen[0].model, "quick");
+});
+
+test("a quick task whose quick models are busy fails fast instead of waiting on the main model", async () => {
+  const { config } = await import("../src/config.ts");
+  const prev = [config.fastModel, config.fallbackModels];
+  Object.assign(config, { fastModel: "limited", fallbackModels: ["limited"] });
+  try {
+    seen.length = 0;
+    await assert.rejects(structured({ system: "Classify.", prompt: "An email.", schema: Fit, effort: "low" }));
+    assert.deepEqual(
+      seen.map((s) => s.model),
+      ["limited"],
+      "the stalled main model is never tried for a quick task",
+    );
+    seen.length = 0;
+    await assert.rejects(structured({ system: "Classify.", prompt: "Another.", schema: Fit, effort: "low" }), /resting/);
+    assert.equal(seen.length, 0, "while it rests (a minute, for a rate limit), quick tasks don't even ask");
+  } finally {
+    Object.assign(config, { fastModel: prev[0], fallbackModels: prev[1] });
+  }
 });
 
 test("extractJson: plain, fenced, or wrapped in a sentence", () => {
