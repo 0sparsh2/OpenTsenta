@@ -53,7 +53,7 @@ export const config = {
   /** Boards whose ATS pages through results (Workday, iCIMS, Oracle…) are polled this often. */
   pollHeavyIntervalMin: num("POLL_HEAVY_INTERVAL_MIN", 720),
   /** Jobs posted (or, without a date, first seen) longer ago than this are dropped, unless you applied, saved, or skipped them. */
-  jobRetentionDays: num("JOB_RETENTION_DAYS", 14),
+  jobRetentionDays: num("JOB_RETENTION_DAYS", 7),
   /** Closed jobs you never touched are deleted after this many days. */
   closedJobRetentionDays: num("CLOSED_JOB_RETENTION_DAYS", 2),
 

@@ -27,7 +27,7 @@ npm start                         # http://localhost:8787
 ```
 
 Sign in with any email, upload a résumé (`samples/alex_morgan_resume.txt` works), and finish onboarding.
-The watcher covers over 300,000 open roles posted in the last two weeks (JOB_RETENTION_DAYS) from 11,256 company boards. Big paged boards (Workday, iCIMS…) refresh twice a day, the rest every two hours.
+The watcher covers about 220,000 open roles posted in the last week (JOB_RETENTION_DAYS=7) from 11,256 company boards. Big paged boards (Workday, iCIMS…) refresh twice a day, the rest every two hours.
 
 To work on the UI with hot reload, run `npm run dev` (API on :8787, Vite on :5173).
 

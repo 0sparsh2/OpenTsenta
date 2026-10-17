@@ -81,7 +81,7 @@ async function pollCompany(c: CompanyRow): Promise<{ fresh: string[]; firstTime:
 }
 
 /**
- * Recent jobs only: a job posted more than JOB_RETENTION_DAYS ago isn't stored. A job with no posting date is a
+ * Recent jobs only (a week by default): a job posted more than JOB_RETENTION_DAYS ago isn't stored. A job with no posting date is a
  * "dropped" tombstone once it's been listed that long, so its board can't bring it back as new.
  */
 export function keep(j: JobInput, cutoff: string, seen: string): boolean {

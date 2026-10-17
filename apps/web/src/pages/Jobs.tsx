@@ -52,7 +52,9 @@ export default function Jobs() {
   const [scope, setScope] = usePersistent<"title" | "all">("scope", "title");
   const [places, setPlaces] = usePersistent<string[]>("places", []);
   const [workplace, setWorkplace] = usePersistent("workplace", "any");
-  const [posted, setPosted] = usePersistent("posted2", "");
+  const [savedPosted, setPosted] = usePersistent("posted2", "");
+  // Ferry keeps a week of jobs, so a saved "past week" is the same as no filter.
+  const posted = savedPosted === "7" ? "" : savedPosted;
   const [sponsors, setSponsors] = usePersistent("sponsors", false);
   const [minScore, setMinScore] = usePersistent("minScore", 60);
   const [sort, setSort] = usePersistent<"match" | "newest" | "relevance">("sort", "match");
@@ -143,10 +145,9 @@ export default function Jobs() {
             <option value="onsite">On-site</option>
           </Select>
           <Select value={posted} onChange={(e) => setPosted(e.target.value)} className="w-auto" aria-label="Posted">
-            <option value="">Past 2 weeks</option>
+            <option value="">Past week</option>
             <option value="1">Past 24h</option>
             <option value="3">Past 3 days</option>
-            <option value="7">Past week</option>
           </Select>
           <label className="flex h-9 items-center gap-2 rounded-lg border border-line bg-card px-3 text-[13px]">
             <input type="checkbox" checked={sponsors} onChange={(e) => setSponsors(e.target.checked)} className="accent-ink" /> Sponsors visas

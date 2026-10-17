@@ -126,7 +126,7 @@ test("location suggestions: grouped with counts, nicknames, picked places left o
   assert.deepEqual(r.selected, [{ key: "us", label: "United States", n: 5 }]);
 });
 
-test("retention: two weeks of jobs; undated ones are remembered when dropped; yours are kept; unchanged ones aren't rewritten", async () => {
+test("retention: one week of jobs; undated ones are remembered when dropped; yours are kept; unchanged ones aren't rewritten", async () => {
   const { sweepOldJobs, keep } = await import("../src/ingest/poller.ts");
   const { ingestJob } = await import("../src/store.ts");
   const { one } = await import("../src/db.ts");
@@ -138,9 +138,10 @@ test("retention: two weeks of jobs; undated ones are remembered when dropped; yo
   const recent = new Date(Date.now() - 3 * day).toISOString();
   const fresh = ingestJob(job("r-new", { postedAt: recent }));
   const old = ingestJob(job("r-old", { postedAt: new Date(Date.now() - 20 * day).toISOString() }));
+  const lastWeek = ingestJob(job("r-10d", { postedAt: new Date(Date.now() - 10 * day).toISOString() }));
   const undated = ingestJob(job("r-undated"));
   const mine = ingestJob(job("r-mine", { postedAt: new Date(Date.now() - 40 * day).toISOString() }));
-  run("UPDATE jobs SET first_seen_at = ? WHERE id = ?", new Date(Date.now() - 16 * day).toISOString(), undated.id);
+  run("UPDATE jobs SET first_seen_at = ? WHERE id = ?", new Date(Date.now() - 9 * day).toISOString(), undated.id);
   const u = getUserByEmail("search@ferry.local")!;
   run("INSERT INTO applications(id, user_id, job_id, status, source) VALUES('app_keep', ?, ?, 'COMPLETED', 'dashboard')", u.id, mine.id);
 
@@ -150,16 +151,17 @@ test("retention: two weeks of jobs; undated ones are remembered when dropped; yo
   assert.equal(one<{ content_hash: string }>("SELECT content_hash FROM jobs WHERE id = ?", fresh.id)!.content_hash, before);
 
   const removed = await sweepOldJobs();
-  assert.ok(removed >= 2);
+  assert.ok(removed >= 3);
   const exists = (id: string) => Boolean(one("SELECT 1 FROM jobs WHERE id = ?", id));
   assert.equal(exists(fresh.id), true);
   assert.equal(exists(old.id), false, "posted 20 days ago: gone");
-  assert.equal(exists(undated.id), false, "first seen 16 days ago with no date: gone");
+  assert.equal(exists(lastWeek.id), false, "posted 10 days ago: gone (older than a week)");
+  assert.equal(exists(undated.id), false, "first seen 9 days ago with no date: gone");
   assert.equal(exists(mine.id), true, "you applied: kept");
   assert.equal(one("SELECT 1 FROM job_places WHERE job_id = ?", old.id), undefined, "its places went with it");
 
   // The next poll: the old posting is skipped by date; the undated one is remembered, not re-added as new.
-  const cutoff = new Date(Date.now() - 14 * day).toISOString();
+  const cutoff = new Date(Date.now() - 7 * day).toISOString();
   assert.equal(keep(job("r-old", { postedAt: new Date(Date.now() - 20 * day).toISOString() }), cutoff, new Date().toISOString()), false);
   assert.equal(keep(job("r-undated"), cutoff, new Date().toISOString()), false);
   assert.equal(keep(job("r-brand-new"), cutoff, new Date().toISOString()), true);
