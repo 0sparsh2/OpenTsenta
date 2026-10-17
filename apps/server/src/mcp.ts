@@ -45,8 +45,12 @@ function buildServer(token: string, scopes: Set<McpScope> = new Set(["jobs:read"
       annotations: { readOnlyHint: true },
     },
     async ({ limit, min_score }) => {
-      const d = (await call("GET", `/jobs/recommendations?limit=${limit ?? 10}&minScore=${min_score ?? 0}`)) as { items: { id: string; title: string; company: string; location: string; salary?: string; url: string; match: { score: number; reasons: string[]; gaps: string[] } }[]; total: number };
-      return out({ total: d.total, matches: d.items.map((j) => ({ job_id: j.id, title: j.title, company: j.company, location: j.location, salary: j.salary, url: j.url, score: j.match?.score, reasons: j.match?.reasons, gaps: j.match?.gaps })) });
+      const d = (await call("GET", `/jobs/recommendations?limit=${limit ?? 10}&minScore=${min_score ?? 0}`)) as { items: { id: string; title: string; company: string; location: string; salary?: string; url: string; match: { score: number; reasons: string[]; gaps: string[] } }[]; total: number; scoring?: boolean };
+      return out({
+        total: d.total,
+        ...(d.scoring ? { note: "Ferry is scoring jobs against the latest résumé and profile right now; ask again in a minute for the full list." } : {}),
+        matches: d.items.map((j) => ({ job_id: j.id, title: j.title, company: j.company, location: j.location, salary: j.salary, url: j.url, score: j.match?.score, reasons: j.match?.reasons, gaps: j.match?.gaps })),
+      });
     },
   );
 

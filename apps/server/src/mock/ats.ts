@@ -1,6 +1,7 @@
 import crypto from "node:crypto";
 import { Hono } from "hono";
 import { config } from "../config.ts";
+import { run } from "../db.ts";
 import { upsertJob } from "../store.ts";
 import { WD_JOBS, workday } from "./workday.ts";
 import { deliverLocal } from "../mail/index.ts";
@@ -72,7 +73,18 @@ Salary $130,000 - $165,000.`,
   },
 ];
 
+/**
+ * The sandbox employers' postings, for local development and tests (and SANDBOX_JOBS=true). A real instance doesn't
+ * list them: it removes any left from earlier runs, except ones you applied to or saved. The /mock-ats pages still
+ * answer by direct link.
+ */
 export function seedSandboxJobs() {
+  if (!config.sandboxJobs) {
+    run(
+      "DELETE FROM jobs WHERE url LIKE '%/mock-ats/%' AND id NOT IN (SELECT job_id FROM applications) AND id NOT IN (SELECT job_id FROM matches WHERE status != 'new')",
+    );
+    return;
+  }
   for (const j of HANDBACK_JOBS) {
     const url = handbackUrls(config.publicUrl, j);
     upsertJob({

@@ -32,3 +32,13 @@ test("private instance: no new accounts by any route; the owner still signs in",
   assert.ok((await login.json()).token);
   assert.equal((await post("/auth/signup", { email: "owner@example.com", password: "x" })).status, 400, "an existing email isn't told sign-ups are closed");
 });
+
+test("a real instance doesn't list the sandbox employers' practice postings", async () => {
+  const { ingestJob } = await import("../src/store.ts");
+  const { seedSandboxJobs } = await import("../src/mock/ats.ts");
+  const { one } = await import("../src/db.ts");
+  const left = ingestJob({ companyId: null, company: "Acme Robotics (sandbox)", ats: "mock", externalId: "old-1001", title: "Software Engineer, Platform", location: "Remote", workplace: "remote", url: "https://old-tunnel.example/mock-ats/acme/jobs/1001", applyUrl: "https://old-tunnel.example/mock-ats/acme/jobs/1001", description: "", sponsorsVisa: null });
+  seedSandboxJobs();
+  assert.equal(one("SELECT 1 FROM jobs WHERE id = ?", left.id), undefined, "left over from an earlier run: removed");
+  assert.equal(one("SELECT 1 FROM jobs WHERE url LIKE '%/mock-ats/%'"), undefined, "none seeded");
+});

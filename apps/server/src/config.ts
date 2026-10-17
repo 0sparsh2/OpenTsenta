@@ -75,6 +75,8 @@ export const config = {
   authMode: env("AUTH_MODE", "dev") as "dev" | "password",
   /** false = private instance: only existing accounts sign in (sign-up, dev login and email links create no one). */
   allowSignups: bool("ALLOW_SIGNUPS", true),
+  /** List the sandbox employers' practice postings (default: local mode only, where development and tests use them). */
+  sandboxJobs: bool("SANDBOX_JOBS", env("AUTH_MODE", "dev") === "dev"),
   corsOrigins: env("CORS_ORIGINS", "").split(",").map((s) => s.trim()).filter(Boolean),
 
   // Outbound email (verification, magic links, notifications). Without a key, mail goes to the local mailbox.

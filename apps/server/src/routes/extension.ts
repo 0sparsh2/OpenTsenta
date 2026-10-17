@@ -39,7 +39,7 @@ extension.post("/extension/fill", async (c) => {
   const u = c.get("user");
   const b = FillBody.safeParse(await c.req.json().catch(() => ({})));
   if (!b.success) return c.json({ error: "Couldn't read that form" }, 400);
-  const job = await ensureDescription(await resolveJob({ url: b.data.jobUrl ?? b.data.url, title: b.data.title, company: b.data.company }));
+  const job = await ensureDescription(await resolveJob({ url: b.data.jobUrl ?? b.data.url, title: b.data.title, company: b.data.company, onPage: true }));
   const profile = profileFor(u, job);
   if (!profile) return c.json({ error: "Import a résumé in Ferry first" }, 409);
   const { app: created } = createApplication(u.id, job.id, "extension", profile.id);

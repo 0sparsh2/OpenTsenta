@@ -31,6 +31,7 @@ import {
   type Resume,
   type User,
 } from "../store.ts";
+import { scheduleRematch } from "../match/score.ts";
 import type { Profile, ResumeDoc, ResumeLayout } from "../types.ts";
 import { all } from "../db.ts";
 
@@ -128,6 +129,7 @@ resumes.post("/resumes", async (c) => {
   }
   const name = (typeof body.name === "string" && body.name.trim()) || suggestProfileName(doc);
   const resume = saveResume({ userId: u.id, name, filePath, fileName, text, doc, isDefault: false, targets: suggestTargets(doc, name), origin: "import" });
+  scheduleRematch(u.id, 2000);
 
   const p = u.profile;
   const fill = <T,>(cur: T | undefined, v: T | undefined) => (cur ? cur : v);
@@ -190,6 +192,7 @@ resumes.post("/resumes/:id/set-default", (c) => {
   const r = ownProfile(c);
   if (!r) return bad(c, "Not found", 404);
   setDefaultResume(c.get("user").id, r.id);
+  scheduleRematch(c.get("user").id);
   return c.json({ ok: true });
 });
 
@@ -198,6 +201,7 @@ resumes.delete("/resumes/:id", (c) => {
   if (!r) return bad(c, "Not found", 404);
   if (r.isDefault) return bad(c, "Your default profile can't be deleted. Make another one the default first.", 409);
   deleteResume(c.get("user").id, r.id);
+  scheduleRematch(c.get("user").id);
   return c.json({ ok: true });
 });
 

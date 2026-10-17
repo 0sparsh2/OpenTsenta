@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { all, run } from "../db.ts";
 import { structured, withFallback } from "../llm.ts";
-import { getDefaultResume, listResumes, listUsers, toJob, type User } from "../store.ts";
+import { getDefaultResume, getUser, listResumes, listUsers, toJob, type User } from "../store.ts";
 import { profileUser } from "../resume/profiles.ts";
 import { allSkills, plain } from "../resume/model.ts";
 import type { Job, MatchResult, ResumeDoc } from "../types.ts";
@@ -303,8 +303,40 @@ export async function matchNewJobs(jobIds: string[], opts: { quiet?: boolean } =
 }
 
 /** Full rescore of every open job for a user (after onboarding or a profile change). */
+/**
+ * Rescore everything for a user soon after their résumé or profile changes (an import from Claude, an edit in the
+ * dashboard). A burst of edits rescores once, and a rescore already running is followed by one more, not two at once.
+ */
+const pending = new Map<string, { timer: ReturnType<typeof setTimeout>; due: number }>();
+const rescoring = new Set<string>();
+export const rematchPending = (userId: string) => pending.has(userId) || rescoring.has(userId);
+export function scheduleRematch(userId: string, delayMs = 5000) {
+  // A later edit never pushes back a rescore that's already due sooner (the edit is included when it runs).
+  const due = Date.now() + delayMs;
+  const queued = pending.get(userId);
+  if (queued && queued.due <= due) return;
+  if (queued) clearTimeout(queued.timer);
+  const t = setTimeout(async () => {
+    if (rescoring.has(userId)) return scheduleRematch(userId, delayMs);
+    pending.delete(userId);
+    const u = getUser(userId);
+    if (!u || !getDefaultResume(userId)) return;
+    rescoring.add(userId);
+    try {
+      await rematchUser(u);
+    } catch (e) {
+      console.error("[rematch]", e);
+    } finally {
+      rescoring.delete(userId);
+    }
+  }, delayMs);
+  t.unref?.();
+  pending.set(userId, { timer: t, due });
+}
+
+/** Full rescore, silently: these jobs aren't news, so no texts or pushes (alerts are for newly posted jobs). */
 export async function rematchUser(user: User, llmBudget = 30) {
   const jobs = all("SELECT * FROM jobs WHERE closed_at IS NULL ORDER BY first_seen_at DESC LIMIT 100000").map(toJob);
   run("DELETE FROM matches WHERE user_id = ? AND status = 'new'", user.id);
-  return matchJobsForUser(user, jobs, { llmBudget });
+  return matchJobsForUser(user, jobs, { llmBudget, quiet: true });
 }

@@ -15,7 +15,7 @@ import { compileQuery, describeQuery } from "./match/query.ts";
 import { locationSuggestions } from "./ingest/locations.ts";
 import { ensureDescription } from "./ingest/describe.ts";
 import { llmEnabled } from "./llm.ts";
-import { matchJobsForUser, rematchUser, saveMatch } from "./match/score.ts";
+import { matchJobsForUser, rematchPending, rematchUser, saveMatch, scheduleRematch } from "./match/score.ts";
 import { cancel, enqueue, queueStatus } from "./apply/queue.ts";
 import { resumes } from "./routes/resumes.ts";
 import { extension } from "./routes/extension.ts";
@@ -280,6 +280,8 @@ api.put("/profile", async (c) => {
     library: Array.isArray(p.library) ? p.library.filter((e) => e && typeof e.question === "string" && e.question.trim()) : u.profile.library,
   };
   updateProfile(u.id, merged);
+  // Preferences, location and work authorization change who fits what: rescore once the edits settle.
+  scheduleRematch(u.id, 15000);
   return c.json(merged);
 });
 
@@ -354,7 +356,7 @@ api.get("/jobs/recommendations", (c) => {
     u.id,
     minScore,
   )?.n;
-  return c.json({ items: recommendations(u.id, limit, offset, minScore), total });
+  return c.json({ items: recommendations(u.id, limit, offset, minScore), total, scoring: rematchPending(u.id) });
 });
 
 api.get("/jobs/search", (c) => {
@@ -574,7 +576,13 @@ api.post("/applications", async (c) => {
   if (!getDefaultResume(u.id)) return bad(c, "Upload a résumé first", 409);
   if (u.credits <= 0) return bad(c, "You're out of application credits", 402);
   let jobId = body.jobId;
-  if (!jobId && body.url) jobId = (await resolveJob({ url: body.url, title: body.title, company: body.company, description: body.description })).id;
+  if (!jobId && body.url) {
+    try {
+      jobId = (await resolveJob({ url: body.url, title: body.title, company: body.company, description: body.description })).id;
+    } catch (e) {
+      return bad(c, `Couldn't read a job posting at that link: ${(e as Error).message}`);
+    }
+  }
   if (!jobId || !getJob(jobId)) return bad(c, "Unknown job", 404);
   const { app, created } = createApplication(u.id, jobId, body.source ?? "dashboard", chooseProfile(u, jobId, body.resumeId));
   if (created && typeof body.previewResume === "boolean") patchApplication(app.id, { reviewResume: body.previewResume });

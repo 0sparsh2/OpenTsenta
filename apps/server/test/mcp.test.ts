@@ -92,17 +92,27 @@ test("profile from the conversation: import a résumé, list profiles, update wo
   assert.equal(saved.saved, 1);
   const lib = (await rest("GET", "/profile")).data.library;
   assert.ok(lib.some((e: any) => e.question === "Are you open to relocation?" && e.mode === "fixed"));
+
+  // Set up entirely from the chat: the import rescores every job in the background, so matches show up.
+  let matches: any = { total: 0 };
+  for (let i = 0; i < 40 && !matches.total; i++) {
+    await new Promise((r) => setTimeout(r, 500));
+    matches = await tool("get_job_matches", { limit: 5 });
+  }
+  assert.ok(matches.total > 0, "matches after importing a résumé from the chat");
 });
 
 test("apply to a list: batch statuses, progress, questions back to the chat, approve the batch", async () => {
   // Ferry shouldn't write the open-ended answer itself here, so it comes back as a question.
   await rest("PATCH", "/settings", { autoWriteAnswers: false });
   const acme = `${BASE}/mock-ats/acme/jobs/1001`;
-  const batch = await tool("apply_to_jobs", { items: [acme, "job_nope"], text: `Also this one: ${acme} (same as above)`, notes: "Lead with the platform work" });
+  const notAPosting = `${BASE}/healthz`;
+  const batch = await tool("apply_to_jobs", { items: [acme, "job_nope", notAPosting], text: `Also this one: ${acme} (same as above)`, notes: "Lead with the platform work" });
   const byInput = Object.fromEntries(batch.items.map((i: any) => [i.input, i]));
   assert.equal(byInput[acme].status, "queued");
   assert.equal(byInput.job_nope.status, "not_a_job");
-  assert.equal(batch.items.length, 2, "the duplicate link counts once");
+  assert.equal(byInput[notAPosting].status, "not_a_job", "a page that isn't a posting doesn't become a job");
+  assert.equal(batch.items.length, 3, "the duplicate link counts once");
   const appId = byInput[acme].application_id;
   const { getApplication } = await import("../src/store.ts");
   assert.equal(getApplication(appId)!.tailorInstructions, "Lead with the platform work", "notes steer tailoring and answers");
@@ -127,7 +137,7 @@ test("apply to a list: batch statuses, progress, questions back to the chat, app
     () => tool("get_batch", { batch_id: batch.batch_id }),
     (b: any) => b.counts.waiting_for_review === 1,
   );
-  assert.equal(ready.counts.not_a_job, 1);
+  assert.equal(ready.counts.not_a_job, 2);
   const approved = await tool("approve_batch", { batch_id: batch.batch_id });
   assert.deepEqual(approved.approved, [appId]);
   const done = await until(

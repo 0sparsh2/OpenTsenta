@@ -15,6 +15,8 @@ export interface CapturedJob {
   company?: string;
   location?: string;
   description?: string;
+  /** The user is on this page (the extension filling its form): take it as the job even if it doesn't read like a posting. */
+  onPage?: boolean;
 }
 
 /**
@@ -66,11 +68,15 @@ export async function resolveJob(input: CapturedJob): Promise<Job> {
 
   const pageText = input.description?.trim() || (html ? htmlToText(html.replace(/<(header|footer|nav)[\s\S]*?<\/\1>/gi, "")) : "");
   const titleTag = decodeEntities(html.match(/<title[^>]*>([\s\S]*?)<\/title>/i)?.[1]?.trim() ?? "");
+  // A page you captured from the extension is a job you're looking at; any other page has to read like a posting.
+  const captured = Boolean(input.title || input.onPage);
+  const fromPage = { title: input.title || titleTag.split(/[|\-–]/)[0].trim() || "Untitled role", company: input.company || hostCompany(url), location: input.location ?? "", description: pageText };
   const extracted = await withFallback(
     "jd-extract",
-    () => llmExtract(url, pageText),
-    () => ({ title: input.title || titleTag.split(/[|\-–]/)[0].trim() || "Untitled role", company: input.company || hostCompany(url), location: input.location ?? "", description: pageText }),
+    async () => (await llmExtract(url, pageText)) ?? (captured ? fromPage : null),
+    () => (captured || looksLikePosting(pageText) ? fromPage : null),
   );
+  if (!extracted) throw new NotAJobPosting(`${url} doesn't look like a job posting`);
   const ats = detectAtsFromPage(url, html);
   return upsertJob({
     companyId: null,
@@ -247,8 +253,26 @@ async function llmExtract(url: string, pageText: string) {
     schema: ExtractSchema,
     prompt: `URL: ${url}\n\n<page_text>\n${truncate(pageText, 30000)}\n</page_text>`,
   });
-  if (!out.is_job_posting) throw new Error("not a job posting");
-  return out;
+  // "Not a job" is an answer, not a failure: the caller must not fall back to treating the page as one.
+  return out.is_job_posting ? out : null;
+}
+
+export class NotAJobPosting extends Error {}
+
+/** Without the model: does the page text read like a job posting (several of the usual sections or phrases)? */
+export function looksLikePosting(text: string): boolean {
+  const signals = [
+    /responsibilit/i,
+    /qualifications?|requirements/i,
+    /apply|application/i,
+    /job description|about the (role|job|position)|the role/i,
+    /what you('|’)ll (do|bring)|you will/i,
+    /years of (professional |relevant )?experience/i,
+    /full[- ]time|part[- ]time|contract|internship/i,
+    /benefits|salary|compensation|pay range|equity/i,
+    /we('|’)re (hiring|looking for)|join (our|the) team/i,
+  ];
+  return text.length >= 400 && signals.filter((re) => re.test(text)).length >= 3;
 }
 
 /** URL first, then markers in the page for career sites on the company's own domain. */

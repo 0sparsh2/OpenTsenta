@@ -14,6 +14,7 @@ Object.assign(process.env, {
   PORT: String(PORT),
   PUBLIC_URL: `http://localhost:${PORT}`,
   AUTH_MODE: "password",
+  SANDBOX_JOBS: "true", // password mode is a real instance; these tests use the sandbox employers
   LLM_DISABLED: "true",
   STRIPE_SECRET_KEY: "sk_test_ferry",
   STRIPE_WEBHOOK_SECRET: "whsec_test_ferry",
@@ -30,7 +31,7 @@ const { mcp } = await import("../src/mcp.ts");
 const { stripe } = await import("../src/billing.ts");
 const { pendingOtp } = await import("../src/messaging.ts");
 const { startNotifications } = await import("../src/notify/index.ts");
-const { all, one } = await import("../src/db.ts");
+const { all, one, run } = await import("../src/db.ts");
 
 const app = new Hono();
 app.route("/api/v1/mcp", mcp);
@@ -164,9 +165,14 @@ test("text channel: verify phone, get match alerts, apply by replying", async ()
   const { getUser, toJob } = await import("../src/store.ts");
   const jobs = all("SELECT * FROM jobs WHERE company LIKE 'Acme%'").map(toJob);
   await req("PATCH", "/messaging/prefs", { minScore: 40 }, session);
+  // The résumé upload already rescored everything, silently (those jobs aren't news); these arrive as new postings.
+  const { rematchPending } = await import("../src/match/score.ts");
+  for (let i = 0; i < 100 && rematchPending(userId); i++) await new Promise((r) => setTimeout(r, 100));
+  assert.ok(!(await req("GET", "/messaging", undefined, session)).data.log.some((m: any) => /^New match:/.test(m.body)), "a rescore sends no alerts");
+  run("DELETE FROM matches WHERE user_id = ?", userId);
   await matchJobsForUser(getUser(userId)!, jobs, { minStore: 0 });
   const msgs = (await req("GET", "/messaging", undefined, session)).data.log;
-  assert.ok(msgs.some((m: any) => /^New match:/.test(m.body)), "match alert sent");
+  assert.ok(msgs.some((m: any) => /^New match:/.test(m.body)), `match alert sent: ${JSON.stringify(msgs.map((m: any) => m.body))}`);
 
   const list = await req("POST", "/messaging/simulate", { text: "matches" }, session);
   assert.match(list.data.reply, /Top matches:\n1\./);

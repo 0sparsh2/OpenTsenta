@@ -151,8 +151,11 @@ test("recruiter email is routed to the application and moves the tracker", async
 });
 
 test("MCP-equivalent flow: add a job by URL from the sandbox", async () => {
-  const j = await call("POST", "/jobs/fetch", { url: `http://localhost:${PORT}/mock-ats/acme/jobs/1002` });
-  assert.ok(j.title.length > 0);
+  const j = await call("POST", "/jobs/fetch", { url: `http://localhost:${PORT}/mock-ats/secure/jobs/1002` });
+  assert.equal(j.title, "Frontend Engineer, Operator Console");
+  // A page that isn't a posting (here, the sandbox's "Not found") doesn't become a job.
+  const missing = await call("POST", "/jobs/fetch", { url: `http://localhost:${PORT}/mock-ats/acme/jobs/1002` });
+  assert.match(missing.error ?? "", /doesn't look like a job posting/);
 });
 
 test("real-employer safety: fills everything, stops before Submit, sends nothing, charges nothing", async () => {

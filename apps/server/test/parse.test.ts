@@ -126,3 +126,13 @@ test("PDF import: a two-column résumé is read column by column", async () => {
   assert.equal(doc.education[0]?.school, "University of Michigan");
   assert.equal(doc.certifications?.[0]?.name, "AWS Solutions Architect");
 });
+
+test("job pages: a posting reads like one; a plain web page doesn't", async () => {
+  const { looksLikePosting } = await import("../src/ingest/jd.ts");
+  assert.equal(looksLikePosting("Example Domain. This domain is for use in documentation examples without needing permission. Avoid use in operations. Learn more"), false);
+  const about = "About us. We build software for teams. Our story began in 2015 when three friends met. ".repeat(8) + "Contact us for a demo of the product.";
+  assert.equal(looksLikePosting(about), false, "a company page that mentions a team isn't a posting");
+  const jd = `Senior Data Engineer. About the role: you will build pipelines in Spark and Kafka. Responsibilities: own the data platform, partner with analysts.
+Qualifications: 5+ years of experience with Python and SQL. Full-time, hybrid in Austin. Benefits: health, 401k, equity. Apply below. `.repeat(2);
+  assert.equal(looksLikePosting(jd), true);
+});
