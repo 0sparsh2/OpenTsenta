@@ -150,7 +150,19 @@ fly deploy
 Then in claude.ai, go to Settings → Connectors → Add custom connector and enter `https://<app>.fly.dev/api/v1/mcp`.
 Claude registers itself, you sign in to Ferry and approve, and the tools appear.
 
-**Free, from your Mac (Cloudflare Tunnel):** set a password in Settings → Security first, then:
+**Free, from your Mac, at a permanent address (Tailscale Funnel, recommended):** set a password in Settings → Security,
+install Tailscale and log in (`brew install --cask tailscale-app`), then:
+
+```bash
+./scripts/share-tailscale.sh   # https://<your-mac>.<tailnet>.ts.net; the first run asks you to allow Funnel
+```
+
+The address never changes, so MCP clients keep working across restarts. It keeps Ferry private the same way
+(`AUTH_MODE=password`, `ALLOW_SIGNUPS=false`) and keeps the Mac awake while it runs.
+
+**Quick and throwaway (Cloudflare quick tunnel):** Cloudflare's edge blocks some cloud-hosted MCP clients on
+`trycloudflare.com` (403 "Your request was blocked", which can't be configured on a quick tunnel), and the address
+changes on every start. set a password in Settings → Security first, then:
 
 ```bash
 brew install cloudflared      # once
