@@ -172,6 +172,7 @@ async function openForm(run: Run, page: BrowserPage, target: string): Promise<{ 
   const auth = async (): Promise<string | null> => {
     if ((await detectAuthState(page)) === "none") return null;
     const r = await handleAuth(page, {
+      appId: run.app.id,
       user,
       job,
       // A dry run on a real employer must have no side effects: never create accounts there.
@@ -465,7 +466,7 @@ async function execute(run: Run, opts: RunOptions) {
       await page.waitForLoadState("networkidle", { timeout: 15000 }).catch(() => {});
       await sleep(1500);
       // Emailed security code before the submission counts (Greenhouse fraud check).
-      const sc = await submitTimeCode(page, { user, job, think: (t, k) => run.think(t, k) }, clickedAt);
+      const sc = await submitTimeCode(page, { user, job, think: (t, k) => run.think(t, k), appId: run.app.id }, clickedAt);
       if (typeof sc === "object") {
         run.status("NEEDS_INPUT", { error: sc.fail });
         return;

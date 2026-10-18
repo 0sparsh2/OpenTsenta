@@ -57,6 +57,10 @@ export function useLiveEvents(enabled: boolean) {
       on("application:updated", (e) => {
         refresh(["Applications", "Bootstrap", { type: "Application", id: e.applicationId! }]);
       });
+      on("application:asks", (e) => {
+        refresh([{ type: "Application", id: e.applicationId! }]);
+        toast("An employer emailed a verification code. Enter it on the application (or let Claude or muse answer).", "info");
+      });
       on("inbox:new", (e) => {
         refresh(["Inbox", "Tracker", "Bootstrap"]);
         toast(`New ${(e as { category?: string }).category?.replace("_", " ") ?? "email"}: ${e.subject}`, "info");

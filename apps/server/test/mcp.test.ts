@@ -214,6 +214,51 @@ test("OAuth: discovery, registration, consent, PKCE, read-only scope, refresh ro
   assert.equal((await rpc("tools/list", {}, tok2.access_token)).status, 401);
 });
 
+test("how Ferry applies: one mode over the two switches; settings are checked before they're saved", async () => {
+  const consent = (await rest("PATCH", "/settings", { applyMode: "consent" })).data;
+  assert.equal(consent.applyMode, "consent");
+  assert.equal(consent.autoApply, true);
+  assert.equal(consent.autoSubmitApplication, false, "with consent: Ferry starts applications but asks before submitting");
+  const auto = (await rest("PATCH", "/settings", { applyMode: "auto", autoApplyDailyLimit: 100000, autoApplyMinScore: 10, bogus: "x", autoApply: "yes" })).data;
+  assert.deepEqual([auto.applyMode, auto.autoApply, auto.autoSubmitApplication], ["auto", true, true]);
+  assert.equal(auto.autoApplyDailyLimit, 200, "limits are clamped");
+  assert.equal(auto.autoApplyMinScore, 50);
+  assert.equal(auto.bogus, undefined, "unknown settings aren't saved");
+  assert.equal(typeof auto.realSubmit, "boolean", "the page can say whether this server really submits");
+  const back = (await rest("PATCH", "/settings", { applyMode: "approval" })).data;
+  assert.deepEqual([back.applyMode, back.autoApply, back.autoSubmitApplication], ["approval", false, false]);
+});
+
+test("an emailed code nobody's inbox has: asked for in pending_questions, answered from the chat, handed to the open page", async () => {
+  const { askFor } = await import("../src/apply/codes.ts");
+  const { createApplication, getUserByEmail } = await import("../src/store.ts");
+  const { all } = await import("../src/db.ts");
+  const u = getUserByEmail("mcp@ferry.local")!;
+  const job = all<{ id: string }>("SELECT id FROM jobs WHERE url LIKE '%/mock-ats/wizard/%' LIMIT 1")[0];
+  const { app } = createApplication(u.id, job.id, "mcp", null);
+
+  const updates = tool("wait_for_updates", { timeout_seconds: 10 });
+  await new Promise((r) => setTimeout(r, 1500)); // the long poll is listening
+  const waiting = askFor(app.id, u.id, "verification_code", "acme.example", 20_000);
+  const upd = await updates;
+  assert.ok(upd.changed.some((c: any) => c.application_id === app.id && c.progress === "needs_you" && /code/.test(c.detail)), JSON.stringify(upd));
+
+  const later = await tool("wait_for_updates", { timeout_seconds: 1 });
+  assert.ok(later.open_questions.some((x: any) => x.application_id === app.id), "an agent that starts waiting afterwards still hears about it");
+  const q = (await tool("pending_questions")).questions.find((x: any) => x.application_id === app.id);
+  assert.equal(q.kind, "verification_code");
+  assert.equal(q.field_id, "verification_code");
+  assert.ok(q.expires_at);
+  assert.ok((await rest("GET", `/applications/${app.id}`)).data.asks, "the dashboard sees it too");
+
+  const bad = await rest("POST", `/applications/${app.id}/answer`, { answers: [{ field_id: "verification_code", value: "not a code!" }] });
+  assert.equal(bad.status, 409);
+  await tool("answer_questions", { answers: [{ application_id: app.id, field_id: "verification_code", value: "48 21-93" }] });
+  assert.equal(await waiting, "482193", "the page gets the code (spaces and dashes dropped)");
+  assert.equal((await rest("GET", `/applications/${app.id}`)).data.asks, null, "and the question is gone");
+  assert.equal((await rest("POST", `/applications/${app.id}/answer`, { answers: [{ field_id: "verification_code", value: "123456" }] })).status, 409, "no longer waiting");
+});
+
 test("ferry mcp: the stdio bridge speaks JSON-RPC lines to Ferry", async () => {
   const cli = fileURLToPath(new URL("../../cli/bin/ferry.mjs", import.meta.url));
   const child = spawn(process.execPath, [cli, "mcp"], { env: { ...process.env, FERRY_URL: BASE, FERRY_TOKEN: token }, stdio: ["pipe", "pipe", "pipe"] });

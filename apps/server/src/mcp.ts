@@ -209,7 +209,7 @@ function buildServer(token: string, scopes: Set<McpScope> = new Set(["jobs:read"
     {
       title: "Questions Ferry needs answered",
       description:
-        "Required questions Ferry couldn't answer from the profile (judgment questions, essays, clearance…), with options and why, plus hand-backs it can't do itself (captchas, bot checks). Ask the user, then send answers with answer_questions.",
+        "Required questions Ferry couldn't answer from the profile (judgment questions, essays, clearance…), with options and why, plus hand-backs it can't do itself (captchas, bot checks). Ask the user, then send answers with answer_questions. A question with kind verification_code (or verification_link) means an employer just emailed the user a code while Ferry holds the application open: if you can read the user's email, find the newest message from that employer and send the code (or link) back with answer_questions before expires_at; otherwise ask the user for it.",
       inputSchema: { batch_id: z.string().optional() },
       annotations: { readOnlyHint: true },
     },
@@ -221,7 +221,7 @@ function buildServer(token: string, scopes: Set<McpScope> = new Set(["jobs:read"
     {
       title: "Answer questions",
       description:
-        "Send the user's answers to pending_questions. The application continues and still pauses for review before submitting. remember=true saves the answers so the same questions are answered next time.",
+        "Send the user's answers to pending_questions. The application continues and still pauses for review before submitting (unless the user set Ferry to auto-apply). remember=true saves the answers so the same questions are answered next time. For an emailed code, send field_id verification_code with the code (or the link, for verification_link).",
       inputSchema: {
         answers: z.array(z.object({ application_id: z.string(), field_id: z.string(), value: z.union([z.string(), z.array(z.string())]) })).min(1).max(200),
         remember: z.boolean().optional(),
@@ -240,7 +240,7 @@ function buildServer(token: string, scopes: Set<McpScope> = new Set(["jobs:read"
     "wait_for_updates",
     {
       title: "Wait for progress",
-      description: "Wait (up to timeout_seconds, max 50) until an application changes status (tailoring, filling, waiting for review, submitted, needs you…), then return what changed. Scope to a batch with batch_id. Returns an empty list on timeout; call again to keep following.",
+      description: "Wait (up to timeout_seconds, max 50) until an application changes status (tailoring, filling, waiting for review, submitted, needs you…), then return what changed. open_questions lists emailed verification codes Ferry is waiting on right now (answer them with answer_questions before they expire). Scope to a batch with batch_id. Returns an empty list on timeout; call again to keep following.",
       inputSchema: { batch_id: z.string().optional(), timeout_seconds: z.number().int().min(1).max(50).optional() },
       annotations: { readOnlyHint: true },
     },

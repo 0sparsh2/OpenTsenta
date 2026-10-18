@@ -10,6 +10,7 @@ export type BusEvent =
   | { type: "execution:failed"; applicationId: string; jobId: string; error: string }
   | { type: "execution:aborted"; applicationId: string; jobId: string }
   | { type: "application:updated"; applicationId: string; status: string }
+  | { type: "application:asks"; applicationId: string; question: string }
   | { type: "matches:new"; count: number; top?: { jobId: string; title: string; company: string; score: number } }
   | { type: "inbox:new"; messageId: string; subject: string; category: string | null }
   | { type: "jobs:polled"; newJobs: number; companies: number };

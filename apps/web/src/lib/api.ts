@@ -102,6 +102,11 @@ export const api = createApi({
       query: (body) => ({ url: "/applications/bulk", method: "POST", body }),
       invalidatesTags: ["Applications", "Jobs", "Bootstrap"],
     }),
+    /** Answer questions (or an emailed code Ferry is waiting on) without approving the submit. */
+    answerApplication: b.mutation<{ application_id: string; status: string }, { id: string; answers: { field_id: string; value: string | string[] }[] }>({
+      query: ({ id, ...body }) => ({ url: `/applications/${id}/answer`, method: "POST", body }),
+      invalidatesTags: (_r, _e, a) => [{ type: "Application", id: a.id }],
+    }),
     approve: b.mutation<ApplicationRow, { id: string; fields?: { id: string; value: FilledField["value"] }[]; tailored?: ResumeDoc; coverLetter?: string }>({
       query: ({ id, ...body }) => ({ url: `/applications/${id}/approve`, method: "POST", body }),
       invalidatesTags: (_r, _e, a) => ["Applications", "Bootstrap", { type: "Application", id: a.id }],
@@ -302,6 +307,7 @@ export const {
   useApplicationQuery,
   useApplyMutation,
   useApplyBulkMutation,
+  useAnswerApplicationMutation,
   useApproveMutation,
   useAppActionMutation,
   useSaveCoverLetterMutation,

@@ -244,6 +244,8 @@ export interface ApplicationRow {
   needs: string[];
 }
 export interface ApplicationDetail extends ApplicationRow {
+  /** An emailed code (or link) Ferry is waiting on right now, with the employer's page held open. */
+  asks?: { field_id: string; kind: "verification_code" | "verification_link"; question: string; host: string; expires_at: string } | null;
   tailored: ResumeDoc | null;
   changes: ResumeChange[];
   coverLetter: string | null;
@@ -284,7 +286,13 @@ export interface ApplySettings {
   autoApplyDailyLimit: number;
   allowAccountCreation: boolean;
   autoWriteAnswers: boolean;
+  /** One choice over autoApply/autoSubmitApplication (from the server). */
+  applyMode?: ApplyMode;
+  /** Whether this server sends real applications (ALLOW_REAL_SUBMIT). */
+  realSubmit?: boolean;
 }
+
+export type ApplyMode = "approval" | "consent" | "auto";
 
 /** A résumé profile: one imported résumé aimed at a role family. */
 export interface Resume {

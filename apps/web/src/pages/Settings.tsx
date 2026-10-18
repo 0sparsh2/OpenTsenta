@@ -6,6 +6,7 @@ import { errorMessage, useAddSourceMutation, useOauthConnectionsQuery, useOauthD
 import { PageHeader } from "../components/AppLayout";
 import { toast } from "../components/toast";
 import { Badge, Button, Card, cx, Input, Label, SectionTitle, Segmented, Spinner, Tabs, timeAgo, Toggle } from "../components/ui";
+import type { ApplyMode, ApplySettings } from "../lib/types";
 
 function CopyBlock({ text }: { text: string }) {
   const [done, setDone] = useState(false);
@@ -58,27 +59,46 @@ function Automation() {
             sub="Ferry tailors, then pauses so you can look, edit, or ask for changes before it fills anything in. You can also choose this per job."
           />
           <Toggle checked={s.autoApproveCoverLetter} onChange={(v) => save({ autoApproveCoverLetter: v })} label="Auto-approve cover letters" />
-          <Toggle checked={s.autoSubmitApplication} onChange={(v) => save({ autoSubmitApplication: v })} label="Submit without asking" sub="Off (recommended): Ferry fills the form, then waits for your approval before the final submit." />
           <Toggle checked={s.allowAccountCreation} onChange={(v) => save({ allowAccountCreation: v })} label="Create employer accounts for me" sub="When an employer (Workday, iCIMS...) requires a candidate account, create one with your email and a generated password, and verify it from your inbox." />
         </div>
       </Card>
-      <Card className="p-5">
-        <SectionTitle title="Auto-apply" sub="Queue new matches automatically as the watcher finds them." />
-        <Toggle checked={s.autoApply} onChange={(v) => save({ autoApply: v })} label="Auto-apply to strong matches" sub="Each application still follows the review settings on the left." />
-        <div className={cx("mt-2 space-y-4", !s.autoApply && "pointer-events-none opacity-50")}>
-          <div>
-            <Label>
-              Minimum fit <span className="font-semibold text-ink">{s.autoApplyMinScore}%</span>
-            </Label>
-            <input type="range" min={50} max={95} step={5} value={s.autoApplyMinScore} onChange={(e) => save({ autoApplyMinScore: Number(e.target.value) })} className="w-full accent-ink" />
-          </div>
-          <div>
-            <Label>Daily limit</Label>
-            <Input type="number" min={1} max={200} value={s.autoApplyDailyLimit} onChange={(e) => save({ autoApplyDailyLimit: Number(e.target.value) || 1 })} className="w-28" />
-          </div>
-        </div>
-      </Card>
+      <ApplyModeCard s={s} save={save} />
     </div>
+  );
+}
+
+const APPLY_MODES: { value: ApplyMode; label: string; sub: string }[] = [
+  { value: "approval", label: "On approval", sub: "Ferry applies only to jobs you pick (here, the extension, Claude or muse) and waits for your OK before each submit." },
+  { value: "consent", label: "With consent", sub: "Ferry also starts applications for strong new matches on its own, fills them in, and waits for your OK before submitting. Approve here, or ask Claude or muse to." },
+  { value: "auto", label: "Auto-apply", sub: "Ferry applies to strong new matches and submits without asking, within the limits below. Jobs you pick are submitted without asking too." },
+];
+
+function ApplyModeCard({ s, save }: { s: ApplySettings; save: (p: Partial<ApplySettings>) => unknown }) {
+  const mode = s.applyMode ?? (s.autoSubmitApplication ? "auto" : s.autoApply ? "consent" : "approval");
+  const current = APPLY_MODES.find((m) => m.value === mode)!;
+  return (
+    <Card className="p-5">
+      <SectionTitle title="How Ferry applies" sub="Which jobs it applies to, and whether it asks before the final submit." />
+      <Segmented value={mode} options={APPLY_MODES.map(({ value, label }) => ({ value, label }))} onChange={(v) => save({ applyMode: v })} />
+      <p className="mt-3 text-[13px] text-muted">{current.sub}</p>
+      {s.realSubmit === false && (
+        <p className="mt-3 rounded-md border border-line bg-paper px-3 py-2 text-[13px] text-muted">
+          Real submission is off on this server (ALLOW_REAL_SUBMIT): Ferry fills everything and stops right before Submit, so nothing is sent.
+        </p>
+      )}
+      <div className={cx("mt-4 space-y-4", mode === "approval" && "pointer-events-none opacity-50")}>
+        <div>
+          <Label>
+            Strong match: at least <span className="font-semibold text-ink">{s.autoApplyMinScore}%</span> fit
+          </Label>
+          <input type="range" min={50} max={95} step={5} value={s.autoApplyMinScore} onChange={(e) => save({ autoApplyMinScore: Number(e.target.value) })} className="w-full accent-ink" />
+        </div>
+        <div>
+          <Label>Applications Ferry starts per day, at most</Label>
+          <Input type="number" min={1} max={200} value={s.autoApplyDailyLimit} onChange={(e) => save({ autoApplyDailyLimit: Number(e.target.value) || 1 })} className="w-28" />
+        </div>
+      </div>
+    </Card>
   );
 }
 

@@ -9,6 +9,7 @@ import {
   useAppActionMutation,
   useApplicationAccountQuery,
   useApplicationQuery,
+  useAnswerApplicationMutation,
   useApproveMutation,
   useFinishedMyselfMutation,
   useMeQuery,
@@ -182,6 +183,40 @@ function TracePanel({ trace }: { trace: TraceStep[] }) {
   );
 }
 
+/** An emailed code Ferry is waiting on, with the employer's page held open: type it here (or let Claude or muse). */
+function CodePrompt({ app }: { app: App }) {
+  const [value, setValue] = useState("");
+  const [answer, { isLoading }] = useAnswerApplicationMutation();
+  const ask = app.asks;
+  if (!ask) return null;
+  const link = ask.kind === "verification_link";
+  const send = async (e: React.FormEvent) => {
+    e.preventDefault();
+    try {
+      await answer({ id: app.id, answers: [{ field_id: ask.field_id, value: value.trim() }] }).unwrap();
+      setValue("");
+      toast(link ? "Sent. Ferry is opening the link." : "Sent. Ferry is entering the code.", "success");
+    } catch (err) {
+      toast(errorMessage(err), "error");
+    }
+  };
+  return (
+    <form onSubmit={send} className="mt-3 rounded-lg bg-signal-soft px-3 py-2.5 text-[13px] text-ink">
+      <p className="flex items-start gap-2 font-medium">
+        <Mail className="mt-0.5 h-4 w-4 shrink-0 text-signal" />
+        {ask.question}
+      </p>
+      <p className="mt-1 pl-6 text-muted">Ferry is holding the page open until {new Date(ask.expires_at).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}. Claude or muse can answer this too.</p>
+      <div className="mt-2 flex gap-2 pl-6">
+        <Input value={value} onChange={(e) => setValue(e.target.value)} placeholder={link ? "https://…" : "123456"} autoComplete="one-time-code" className={link ? "w-full" : "w-40"} aria-label={link ? "Verification link" : "Verification code"} />
+        <Button type="submit" variant="signal" loading={isLoading} disabled={!value.trim()} icon={<Send className="h-4 w-4" />}>
+          Send
+        </Button>
+      </div>
+    </form>
+  );
+}
+
 export default function ApplicationDetail() {
   const { id = "" } = useParams();
   const { data: app, isLoading } = useApplicationQuery(id, { pollingInterval: 4000 });
@@ -293,6 +328,7 @@ export default function ApplicationDetail() {
             {(live?.currentPage ?? app.currentPage) ? <span className="text-faint">· page {live?.currentPage ?? app.currentPage}</span> : null}
           </p>
         )}
+        <CodePrompt app={app} />
         {app.status === "NEEDS_INPUT" && (
           <div className="mt-3 flex items-start gap-2 rounded-lg bg-signal-soft px-3 py-2.5 text-[13px] text-ink">
             <CircleAlert className="mt-0.5 h-4 w-4 shrink-0 text-signal" />

@@ -1,5 +1,6 @@
 import type { Frame, Locator, Page } from "playwright";
-import { waitForVerification } from "../mail/index.ts";
+import { mailSources, waitForVerification } from "../mail/index.ts";
+import { askFor } from "./codes.ts";
 import { accountHost, createAccountRecord, getAccount, markAccount } from "../vault.ts";
 import type { User } from "../store.ts";
 import type { Job } from "../types.ts";
@@ -21,6 +22,32 @@ export interface AuthContext {
   dryRun?: boolean;
   /** Called with the vault host once an account is used or created, so the application can show it. */
   onAccount?: (host: string) => void;
+  /** The application, so a code that never reaches a connected inbox can be asked for (see codes.ts). */
+  appId?: string;
+}
+
+/**
+ * The emailed code or link: from a connected inbox if there is one (Gmail, IMAP; the local inbox is the sandbox's),
+ * else asked for, keeping the employer's page open: Claude or muse can read it from your email, or you type it.
+ */
+async function obtainVerification(
+  ctx: { user: User; appId?: string; think: AuthContext["think"] },
+  opts: { since: Date; senderHints: string[]; prefer: "code" | "link"; host: string },
+): Promise<{ code?: string; link?: string; from: string } | null> {
+  const src = mailSources(ctx.user.id);
+  const realInbox = src.gmail || src.imap;
+  const v = await waitForVerification(ctx.user.id, { since: opts.since, senderHints: opts.senderHints, timeoutMs: realInbox ? 120_000 : 20_000, prefer: opts.prefer });
+  if (v && (v.code || v.link)) return { code: v.code, link: v.link, from: `"${v.message.subject}"` };
+  if (!ctx.appId) return null;
+  ctx.think(
+    realInbox
+      ? "The code didn't show up in your inbox, so Ferry is asking for it (Claude, muse or the dashboard can answer)"
+      : "No inbox connected, so Ferry is asking for the emailed code (Claude, muse or the dashboard can answer; connect Gmail in Settings → Email to skip this)",
+    "action",
+  );
+  const answer = await askFor(ctx.appId, ctx.user.id, opts.prefer === "link" ? "verification_link" : "verification_code", opts.host);
+  if (!answer) return null;
+  return opts.prefer === "link" && /^https?:/.test(answer) ? { link: answer, from: "your answer" } : { code: answer, from: "your answer" };
 }
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -254,14 +281,14 @@ export async function handleAuth(page: Page, ctx: AuthContext): Promise<{ ok: tr
     }
 
     if (state === "verify_code" || state === "verify_link") {
-      ctx.think("Waiting for the employer's verification email in your inbox", "action");
-      const v = await waitForVerification(ctx.user.id, { since, senderHints, timeoutMs: 120_000, prefer: state === "verify_link" ? "link" : "code" });
-      if (!v) return { ok: false, reason: "The verification email didn't arrive. Connect your inbox (Settings → Email) so Ferry can read verification codes, or verify the account yourself." };
+      ctx.think("Waiting for the employer's verification email", "action");
+      const v = await obtainVerification(ctx, { since, senderHints, prefer: state === "verify_link" ? "link" : "code", host });
+      if (!v) return { ok: false, reason: "The verification code never came through (no connected inbox had it, and nobody answered in time). Connect Gmail in Settings → Email, or verify the account yourself." };
       if (state === "verify_code" && v.code) {
-        ctx.think(`Entering the verification code from "${v.message.subject}"`, "action");
+        ctx.think(`Entering the verification code from ${v.from}`, "action");
         await enterCode(page, frame, v.code, /^(verify|submit|continue|confirm|next)$/i);
       } else if (v.link) {
-        ctx.think("Opening the verification link from your inbox", "action");
+        ctx.think(`Opening the verification link from ${v.from}`, "action");
         await page.goto(v.link, { waitUntil: "domcontentloaded" });
         await page.waitForLoadState("networkidle", { timeout: 12000 }).catch(() => {});
       } else return { ok: false, reason: "Got the verification email but couldn't find a code or link in it" };
@@ -294,16 +321,16 @@ const SUBMIT_CODE_TEXT = /(verification|security) code (has been |was )?sent|ent
  * Some boards (Greenhouse's fraud check) email a security code after Submit and hold the application until it's
  * entered. Read it from the inbox, enter it, and submit again. "none" when no such prompt is showing.
  */
-export async function submitTimeCode(page: Page, ctx: { user: User; job: Job; think: AuthContext["think"] }, since: Date): Promise<"none" | "entered" | { fail: string }> {
+export async function submitTimeCode(page: Page, ctx: { user: User; job: Job; think: AuthContext["think"]; appId?: string }, since: Date): Promise<"none" | "entered" | { fail: string }> {
   const text = await pageText(page);
   if (!SUBMIT_CODE_TEXT.test(text)) return "none";
   let frame = page.mainFrame();
   for (const f of page.frames()) if ((await visibleCount(f, "input[maxlength='1']")) >= 4 || (await f.getByLabel(/security code|verification code/i).count().catch(() => 0)) > 0) frame = f;
-  ctx.think("The employer emailed a security code to finish submitting; reading it from your inbox", "action");
+  ctx.think("The employer emailed a security code to finish submitting", "action");
   const hints = [ctx.job.company.replace(/\(.*?\)/g, "").trim().split(/\s+/)[0], "greenhouse", "security code"].filter(Boolean);
-  const v = await waitForVerification(ctx.user.id, { since, senderHints: hints, timeoutMs: 120_000, prefer: "code" });
-  if (!v?.code) return { fail: "The employer's security code email didn't arrive. Connect your inbox (Settings → Email) so Ferry can read it, or submit the application yourself." };
-  ctx.think(`Entering the security code from "${v.message.subject}"`, "action");
+  const v = await obtainVerification(ctx, { since, senderHints: hints, prefer: "code", host: ctx.job.company.replace(/\s*\(.*?\)/, "") });
+  if (!v?.code) return { fail: "The employer's security code never came through (no connected inbox had it, and nobody answered in time). Connect Gmail in Settings → Email, or submit the application yourself." };
+  ctx.think(`Entering the security code from ${v.from}`, "action");
   await enterCode(page, frame, v.code, /^(submit( application)?|verify|confirm|continue)$/i);
   return "entered";
 }

@@ -125,9 +125,39 @@ export function createUser(email: string, name = ""): User {
 export function updateProfile(userId: string, profile: Profile) {
   run("UPDATE users SET profile = ? WHERE id = ?", JSON.stringify(profile), userId);
 }
-export function updateSettings(userId: string, patch: Partial<ApplySettings>) {
+export type ApplyMode = "approval" | "consent" | "auto";
+/**
+ * How Ferry applies, as one choice over the two switches underneath:
+ *   approval: only jobs you pick, and it waits for your OK before each submit (the default)
+ *   consent:  also starts applications for strong new matches itself, and waits for your OK before submitting
+ *   auto:     also starts them itself and submits without asking (minimum fit and daily limit apply)
+ */
+export const applyModeOf = (s: ApplySettings): ApplyMode => (s.autoSubmitApplication ? "auto" : s.autoApply ? "consent" : "approval");
+const MODE_SWITCHES: Record<ApplyMode, Pick<ApplySettings, "autoApply" | "autoSubmitApplication">> = {
+  approval: { autoApply: false, autoSubmitApplication: false },
+  consent: { autoApply: true, autoSubmitApplication: false },
+  auto: { autoApply: true, autoSubmitApplication: true },
+};
+
+/** Only known settings, of the right type and within limits (a setting can send real applications). */
+function cleanSettings(patch: Record<string, unknown>): Partial<ApplySettings> {
+  const out: Record<string, unknown> = {};
+  for (const [k, def] of Object.entries(DEFAULT_APPLY_SETTINGS)) {
+    const v = patch[k];
+    if (v === undefined || typeof v !== typeof def) continue;
+    if ((k === "optimizationMode" || k === "coverLetterMode") && !["off", "honest", "aggressive"].includes(v as string)) continue;
+    out[k] = v;
+  }
+  if (typeof out.autoApplyMinScore === "number") out.autoApplyMinScore = Math.min(100, Math.max(50, Math.round(out.autoApplyMinScore)));
+  if (typeof out.autoApplyDailyLimit === "number") out.autoApplyDailyLimit = Math.min(200, Math.max(1, Math.round(out.autoApplyDailyLimit)));
+  const mode = patch.applyMode as ApplyMode | undefined;
+  if (mode && MODE_SWITCHES[mode]) Object.assign(out, MODE_SWITCHES[mode]);
+  return out as Partial<ApplySettings>;
+}
+
+export function updateSettings(userId: string, patch: Partial<ApplySettings> & { applyMode?: ApplyMode }) {
   const u = getUser(userId)!;
-  const next = { ...u.settings, ...patch };
+  const next = { ...u.settings, ...cleanSettings(patch as Record<string, unknown>) };
   run("UPDATE users SET settings = ? WHERE id = ?", JSON.stringify(next), userId);
   return next;
 }

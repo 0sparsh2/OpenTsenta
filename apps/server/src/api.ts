@@ -45,6 +45,7 @@ import {
   toApplication,
   toJob,
   updateProfile,
+  applyModeOf,
   updateSettings,
   displayName,
   type Application,
@@ -60,7 +61,8 @@ import { webhooks } from "./webhooks.ts";
 import { checkout, PLANS, portal, stripeEnabled } from "./billing.ts";
 import { confirmPhoneVerification, handleInbound, phoneOf, prefsOf, providerFor, recentMessages, setPrefs, startPhoneVerification } from "./messaging.ts";
 import { deletePushSubscription, pushUser, saveNativeToken, savePushSubscription, vapidPublicKey } from "./notify/index.ts";
-import { STATUS_BUCKETS, TRACKED_STATUSES, type FilledField, type Job, type Profile, type ResumeDoc } from "./types.ts";
+import { askOn } from "./apply/codes.ts";
+import { STATUS_BUCKETS, TRACKED_STATUSES, type ApplySettings, type FilledField, type Job, type Profile, type ResumeDoc } from "./types.ts";
 
 type Env = { Variables: { user: User } };
 export const api = new Hono<Env>();
@@ -285,8 +287,10 @@ api.put("/profile", async (c) => {
   return c.json(merged);
 });
 
-api.get("/settings", (c) => c.json(c.get("user").settings));
-api.patch("/settings", async (c) => c.json(updateSettings(c.get("user").id, await c.req.json())));
+// applyMode is the one-choice view of the submit switches; realSubmit says whether this server sends real applications.
+const settingsView = (s: ApplySettings) => ({ ...s, applyMode: applyModeOf(s), realSubmit: config.allowRealSubmit });
+api.get("/settings", (c) => c.json(settingsView(c.get("user").settings)));
+api.patch("/settings", async (c) => c.json(settingsView(updateSettings(c.get("user").id, await c.req.json().catch(() => ({}))))));
 
 // Résumé profiles, previews, tailored résumés and the answer library live in routes/resumes.ts.
 api.route("/", resumes);
@@ -613,7 +617,8 @@ const ownApp = (c: Context<Env>) => {
 
 api.get("/applications/:id", (c) => {
   const a = ownApp(c);
-  return a ? c.json({ ...appView(a, true), job: { ...appView(a).job, description: getJob(a.jobId)?.description } }) : bad(c, "Not found", 404);
+  // asks: an emailed code Ferry is waiting on right now (answer with POST /applications/:id/answer).
+  return a ? c.json({ ...appView(a, true), asks: askOn(a.id), job: { ...appView(a).job, description: getJob(a.jobId)?.description } }) : bad(c, "Not found", 404);
 });
 
 /** Approve whatever gate the application is paused at, optionally with edits. */

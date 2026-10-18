@@ -3,6 +3,7 @@ import { z } from "zod";
 import { all, now, one, parse, run, uid } from "../db.ts";
 import { enqueue } from "../apply/queue.ts";
 import { missingRequired } from "../apply/answer.ts";
+import { answerAsk, ASK_FIELD_ID, askOn, asksFor } from "../apply/codes.ts";
 import { resolveJob } from "../ingest/jd.ts";
 import { pickProfile } from "../resume/profiles.ts";
 import { createApplication, getApplication, getDefaultResume, getJob, getUser, listResumes, patchApplication, rememberAnswer, type User } from "../store.ts";
@@ -176,6 +177,13 @@ agent.get("/questions", (c) => {
         what_to_do: "Open the posting and finish it yourself (or fill it from your own browser with the Ferry extension), then mark it done in Ferry.",
       });
   }
+  // Codes an employer just emailed, while Ferry holds the page open waiting (see apply/codes.ts).
+  for (const { application_id, ...ask } of asksFor(u.id)) {
+    const a = getApplication(application_id);
+    if (!a || (batch && one<{ b: string | null }>("SELECT batch_id AS b FROM applications WHERE id = ?", a.id)?.b !== batch)) continue;
+    const job = getJob(a.jobId);
+    questions.unshift({ application_id, job: job ? { title: job.title, company: job.company, url: job.url } : null, ...ask, why: "The employer emailed it just now; answer before it expires" });
+  }
   return c.json({ questions, hand_backs: handBacks });
 });
 
@@ -188,6 +196,14 @@ agent.post("/applications/:id/answer", async (c) => {
     .object({ answers: z.array(z.object({ field_id: z.string(), value: z.union([z.string(), z.array(z.string())]) })).min(1).max(100), remember: z.boolean().optional() })
     .safeParse(await c.req.json().catch(() => ({})));
   if (!b.success) return bad(c, "Send answers: [{ field_id, value }]");
+  // An emailed code Ferry is waiting on goes straight to the open page.
+  const code = b.data.answers.find((x) => x.field_id === ASK_FIELD_ID);
+  if (code) {
+    const r = answerAsk(u.id, a.id, String(code.value));
+    if (!r.ok) return bad(c, r.error, 409);
+    if (b.data.answers.length === 1) return c.json({ application_id: a.id, still_needed: [], status: "entering the code" });
+    b.data.answers = b.data.answers.filter((x) => x !== code);
+  }
   const unknown = b.data.answers.filter((x) => !a.fields.some((f) => f.id === x.field_id)).map((x) => x.field_id);
   if (unknown.length) return bad(c, `No such field on this application: ${unknown.join(", ")}`);
   const fields = a.fields.map((f) => {
@@ -206,9 +222,14 @@ agent.get("/updates", async (c) => {
   const u = c.get("user");
   const batch = c.req.query("batch");
   const timeout = Math.min(50, Math.max(1, Number(c.req.query("timeout") ?? 25))) * 1000;
+  // A code question counts as a change too: "+code" while Ferry waits on an emailed code.
   const snap = () =>
     new Map(
-      all<{ id: string; status: string }>(`SELECT id, status FROM applications WHERE user_id = ? ${batch ? "AND batch_id = ?" : "AND updated_at >= datetime('now', '-1 day')"}`, u.id, ...(batch ? [batch] : [])).map((r) => [r.id, r.status]),
+      all<{ id: string; status: string }>(
+        `SELECT id, status FROM applications WHERE user_id = ? ${batch ? "AND batch_id = ?" : "AND updated_at >= datetime('now', '-1 day')"}`,
+        u.id,
+        ...(batch ? [batch] : []),
+      ).map((r) => [r.id, askOn(r.id) ? `${r.status}+code` : r.status] as [string, string]),
     );
   const before = snap();
   const t0 = Date.now();
@@ -221,10 +242,21 @@ agent.get("/updates", async (c) => {
         changed: changed.map(([id, s]) => {
           const a = getApplication(id)!;
           const job = getJob(a.jobId);
-          return { application_id: id, from: before.get(id) ?? null, to: s, progress: bucketOf(s as PipelineStatus), job: job ? { title: job.title, company: job.company } : null, detail: a.error ?? a.lastThought ?? null };
+          const asking = s.endsWith("+code");
+          const to = s.replace(/\+code$/, "");
+          return {
+            application_id: id,
+            from: before.get(id)?.replace(/\+code$/, "") ?? null,
+            to,
+            progress: asking ? "needs_you" : bucketOf(to as PipelineStatus),
+            job: job ? { title: job.title, company: job.company } : null,
+            detail: asking ? askOn(id)!.question : (a.error ?? a.lastThought ?? null),
+          };
         }),
         at: now(),
+        open_questions: asksFor(u.id),
       });
   }
-  return c.json({ changed: [], at: now() });
+  // Codes Ferry is waiting on, even if they were asked before this call started (answer them before they expire).
+  return c.json({ changed: [], at: now(), open_questions: asksFor(u.id) });
 });
