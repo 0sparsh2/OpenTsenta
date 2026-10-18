@@ -237,12 +237,16 @@ async function llmTailor(doc: ResumeDoc, job: Job, mode: "honest" | "aggressive"
     const src = doc.projects?.find((x) => x.id === p.id);
     applyBullets(tailored.projects?.find((x) => x.id === p.id), src, p.bullets, src ? `Project · ${src.name}` : "");
   }
-  // Honest mode lists only skills the résumé shows; aggressive may surface ones the work clearly implies.
-  const skills = mode === "honest" ? out.skills.filter((k) => source.skills.has(k.toLowerCase()) || srcText.toLowerCase().includes(k.toLowerCase())) : out.skills;
+  // Skills, flat or grouped: honest mode lists only ones the résumé shows; aggressive may add a recognised skill the
+  // work implies. Neither lets the posting's phrases in as "skills" ("builder mentality", "0-to-1 product").
+  const shown = (k: string) => source.skills.has(k.toLowerCase()) || srcText.toLowerCase().includes(k.toLowerCase());
+  const keep = (list: string[]) => list.filter((k) => shown(k) || (mode === "aggressive" && extractSkills(k).length > 0));
+  const skills = keep(out.skills);
   if (skills.length) tailored.skills = skills;
   for (const g of out.skill_groups) {
     const tg = tailored.skillGroups?.find((x) => x.id === g.id);
-    if (tg && g.skills.length) tg.skills = g.skills;
+    const next = keep(g.skills);
+    if (tg && next.length) tg.skills = next;
   }
   if (held.length) console.warn(`[tailor] kept the original wording ${held.length}×: ${held.join("; ")}`);
   return { tailored, changes, mustHaves: out.must_have_keywords, held };

@@ -55,8 +55,9 @@ function respond(body: Record<string, any>): { json?: unknown; text?: string } {
           bullets: e.bullets.map((b: string, i: number) => ({ text: i === 0 ? `Built distributed ${b.replace(/^Built /, "")}` : b, original_index: i, reason: i === 0 ? "Uses the posting's terminology" : "Unchanged" })),
         })),
         projects: [],
-        skills: doc.skills ?? [],
-        skill_groups: [],
+        // Like a real model under keyword pressure: the posting's phrases slipped in as "skills" (Ferry must drop them).
+        skills: [...(doc.skills ?? []), "builder mentality", "0-to-1 product"],
+        skill_groups: (doc.skillGroups ?? []).map((g: any) => ({ id: g.id, skills: [...g.skills, "deeply collaborative", "customer embedding"] })),
       },
     };
   }

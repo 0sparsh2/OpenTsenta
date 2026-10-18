@@ -89,6 +89,20 @@ test("LLM mode is on and requests use the documented contract", async () => {
   assert.equal(match!.body.output_config.format.schema.additionalProperties, false);
 });
 
+test("tailoring keeps the posting's phrases out of skills, flat or grouped", async () => {
+  const { tailorResume } = await import("../src/resume/tailor.ts");
+  const { normalizeDoc } = await import("../src/resume/model.ts");
+  const doc = normalizeDoc({
+    experience: [{ id: "x1", company: "Boeing", title: "Data Scientist", start: "2024-06", current: true, bullets: ["Built a LangGraph multi-agent platform in Python"] }],
+    skills: ["Python", "LangGraph"],
+    skillGroups: [{ id: "g1", name: "AI & ML", skills: ["LangGraph", "PyTorch"] }],
+  } as any);
+  const job = { id: "j", company: "Traba", title: "Senior Product Manager (AI Agents)", description: "A builder mentality, deeply collaborative, 0-to-1 product, customer embedding.", location: "NYC" } as any;
+  const t = await tailorResume(doc, job, "honest");
+  assert.deepEqual(t.tailored.skills, ["Python", "LangGraph"]);
+  assert.deepEqual(t.tailored.skillGroups![0].skills, ["LangGraph", "PyTorch"]);
+});
+
 test("tailoring, cover letter, and AI answers flow into a ready-to-send application", async () => {
   const jobs = (await call("GET", "/jobs/search?q=Acme&limit=10")).items;
   const job = jobs.find((j: any) => j.title === "Software Engineer, Platform");
