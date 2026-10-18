@@ -253,9 +253,20 @@ export async function hasCaptcha(page: Page): Promise<boolean> {
     if (CAPTCHA_RE.test(f.url()) && !/size=invisible/.test(f.url())) {
       const el = await f.frameElement().catch(() => null);
       const box = el ? await el.boundingBox().catch(() => null) : null;
-      // Invisible reCAPTCHA v3 badges are tiny and challenge frames park offscreen until needed;
-      // only a visible widget on the page blocks us.
-      if (box && box.width > 120 && box.height > 60 && box.y >= 0 && box.x >= 0) return true;
+      // Invisible reCAPTCHA (v3, Enterprise) keeps its badge and challenge frame on the page but hidden until it
+      // decides to challenge; only a widget a person could see blocks us (a challenge after Submit is caught there).
+      const shown = el
+        ? await el
+            .evaluate((n) => {
+              for (let e: Element | null = n as Element; e; e = e.parentElement) {
+                const s = getComputedStyle(e);
+                if (s.display === "none" || s.visibility === "hidden" || Number(s.opacity) === 0) return false;
+              }
+              return true;
+            })
+            .catch(() => true)
+        : false;
+      if (shown && box && box.width > 120 && box.height > 60 && box.y >= 0 && box.x >= 0) return true;
     }
   }
   return false;
