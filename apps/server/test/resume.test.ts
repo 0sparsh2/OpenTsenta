@@ -383,3 +383,25 @@ test("tailoring guard: claims only the posting makes are refused; the posting's 
   assert.deepEqual(inRole("Built distributed services in TypeScript and Go; owned REST and GraphQL APIs."), [], "one borrowed term");
   assert.deepEqual(inRole("Set up observability for microservices using PostgreSQL, Redis, and Kafka on AWS.").sort(), ["Kafka", "PostgreSQL", "Redis", "observability"]);
 });
+
+test("answer rules: 'in NYC/SF or willing to move there' comes from your relocation answer; an AI answer that repeats the question doesn't count", async () => {
+  const { echoesQuestion } = await import("../src/apply/answer.ts");
+  const profile = (await call("GET", "/profile")).data;
+  const doc = { experience: [], skills: [], education: [] };
+  const job = { id: "j", company: "Traba", title: "Senior Product Manager", description: "In person in NYC or SF.", location: "New York City, NY" } as any;
+  const q = { id: "r", label: "Are you in NYC/SF or willing to move to NYC/SF and work with us in-person 5x a week?", kind: "text", required: true } as any;
+  const ctx = (logistics: object, preferences: object = {}) => ({
+    profile: { ...profile, personal: { ...profile.personal, city: "Seattle", region: "WA" }, logistics, preferences: { ...profile.preferences, ...preferences } },
+    doc, job, resumePdf: null, coverPdf: null, coverText: null, prior: [], autoWrite: true,
+  });
+  const [yes] = await answerFields(ctx({ willingToRelocate: true }) as any, [q]);
+  assert.equal(yes.value, "Yes, I'm willing to relocate from Seattle.");
+  const [no] = await answerFields(ctx({ willingToRelocate: false }) as any, [q]);
+  assert.equal(no.value, "No");
+  const [remote] = await answerFields(ctx({ willingToRelocate: true }, { workplace: "remote" }) as any, [q]);
+  assert.notEqual(remote.value, "Yes, I'm willing to relocate from Seattle.", "remote-only: an in-person question is yours to answer");
+
+  assert.equal(echoesQuestion("willing to move to NYC/SF and work with us in-person 5x a week?", q.label), true);
+  assert.equal(echoesQuestion("Yes, I can work in person in NYC five days a week.", q.label), false);
+  assert.equal(echoesQuestion("I'm based in Seattle and happy to relocate.", q.label), false);
+});

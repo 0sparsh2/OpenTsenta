@@ -489,7 +489,17 @@ const RULES: Rule[] = [
   // eligibility
   { re: /(legally )?(authori[sz]ed|eligible|permitted) to work|authori[sz]ation to work|work authori[sz]ation/, value: (c, f) => authorizationOption(c, f) },
   { re: /sponsor|visa (status|support)|require.*(visa|immigration)|h-?1b/, value: (c) => yes(c.profile.workAuth.needsSponsorship) },
-  { re: /relocat/, value: (c) => yes(c.profile.logistics.willingToRelocate) },
+  // "Willing to relocate?", "Are you in NYC/SF or willing to move to NYC/SF…?": from your relocation answer. Free text gets
+  // a sentence; someone who only wants remote work is left to answer an in-person question themselves.
+  {
+    re: /relocat|willing to (move|relocate)|open to (moving|relocat)/,
+    value: (c, f) => {
+      const v = yes(c.profile.logistics.willingToRelocate);
+      if (v === "Yes" && /in[- ]person|on[- ]?site|in (the )?office/.test(f.label.toLowerCase()) && c.profile.preferences.workplace === "remote") return undefined;
+      if (v === "Yes" && !f.options?.length && TEXTY.includes(f.kind)) return `Yes, I'm willing to relocate${c.profile.personal.city ? ` from ${c.profile.personal.city}` : ""}.`;
+      return v;
+    },
+  },
   // Office and onsite expectations: answered only when the place is home (or they'll relocate).
   {
     re: /(comfortable|willing|able|open) (with|to) (an? )?(work(ing)? )?(onsite|on-site|in[- ]office|in[- ]person|from (the|our|a|an) .*office|hybrid)|onsite role|work from (the|our|a|an) .*office|in the office .*(days|week)|(commut|report) to (the|our|an?) office/,
@@ -601,6 +611,15 @@ const AnswerSchema = z.object({
     }),
   ),
 });
+
+/** Is the answer mostly the question's own words (not a yes/no, a number, or a sentence of its own)? */
+export function echoesQuestion(answer: string, question: string): boolean {
+  const words = (t: string) => t.toLowerCase().replace(/[^a-z0-9 ]+/g, " ").split(/\s+/).filter((w) => w.length > 1);
+  const a = words(answer);
+  if (a.length < 3 || /^(yes|no)\b/i.test(answer.trim())) return false;
+  const q = new Set(words(question));
+  return a.filter((w) => q.has(w)).length / a.length >= 0.8;
+}
 
 async function llmAnswers(c: AnswerContext, fields: FormField[]) {
   const p = c.profile;
@@ -727,6 +746,8 @@ export async function answerFields(c: AnswerContext, fields: FormField[]): Promi
       for (const f of pending) {
         const a = byId.get(f.id);
         let value: Value = a?.value?.trim() ? a.value.trim() : null;
+        // A model that answers by repeating the question ("…or willing to move to NYC/SF?") hasn't answered it.
+        if (typeof value === "string" && !f.options?.length && echoesQuestion(value, f.label)) value = null;
         if (value && f.kind === "checkbox" && f.options?.length) value = value.split("|").map((s) => pickOption(f.options, s.trim()) ?? s.trim());
         else if (value && f.options?.length) value = pickOption(f.options, value) ?? value;
         result.push({ ...f, value, source: value ? "ai" : "unanswered", confidence: a?.confidence ?? 0, note: a?.needs_user ? "Needs your input" : undefined });
