@@ -25,7 +25,7 @@ import {
 } from "../store.ts";
 import type { FilledField, PipelineStatus, TraceStep } from "../types.ts";
 import { answerFields, countryName, memorable, missingRequired, pickOption } from "./answer.ts";
-import { detectAuthState, handleAuth, submitTimeCode } from "./auth.ts";
+import { detectAuthState, handleAuth, SUBMIT_CODE_TEXT, submitTimeCode } from "./auth.ts";
 import { extractFields, pageText, type FrameField } from "./extract.ts";
 import { botWall, CONFIRMATION_RE, dismissCookieBanner, findAgreement, fillField, findApplyEntry, findApplyManual, findNext, findSubmit, hasCaptcha, probeComboboxOptions, verifyAndRepair, visibleErrors } from "./fill.ts";
 import { navigate } from "./navigator.ts";
@@ -464,8 +464,8 @@ async function execute(run: Run, opts: RunOptions) {
       run.think(attempt ? "Submitting again after fixing the flagged fields" : "Submitting the application", "action");
       const clickedAt = new Date();
       await submitBtn.click();
-      await page.waitForLoadState("networkidle", { timeout: 15000 }).catch(() => {});
-      await sleep(1500);
+      // Wait for the employer to finish (uploads and bot scoring can take a while) before reading the page.
+      const outcome = await settleAfterSubmit(page);
       // Emailed security code before the submission counts (Greenhouse fraud check).
       const sc = await submitTimeCode(page, { user, job, think: (t, k) => run.think(t, k), appId: run.app.id }, clickedAt);
       if (typeof sc === "object") {
@@ -489,6 +489,15 @@ async function execute(run: Run, opts: RunOptions) {
         return;
       }
       const errs = await visibleErrors(page);
+      // Nothing settled: it may well have gone through. Never click Submit again on a guess (employers limit
+      // re-applications, and some take a submission without a confirmation page).
+      if (!errs.length && outcome === "timeout") {
+        run.think("Clicked Submit, but no confirmation page appeared within a minute and the employer flagged nothing.", "error");
+        run.status("NEEDS_INPUT", {
+          error: `Submitted, but no confirmation appeared. Check your email for a confirmation from ${job.company.replace(/\s*\(.*?\)/, "")} before applying again (they may limit re-applications); if it went through, mark it done.`,
+        });
+        return;
+      }
       if (attempt === 1) throw new Error(errs.length ? `Submit rejected: ${errs.join("; ")}` : "No confirmation after submit");
       run.think(`The employer flagged: ${errs.join("; ") || "unknown errors"}. Re-checking the form.`, "error");
       const recheck = await extractFields(page);
@@ -509,6 +518,21 @@ async function execute(run: Run, opts: RunOptions) {
   } finally {
     await ctx.close().catch(() => {});
   }
+}
+
+/** After Submit: wait (up to a minute) for a confirmation, a code prompt, a visible captcha, or field errors. */
+async function settleAfterSubmit(page: Page, timeoutMs = 60_000): Promise<"confirmed" | "code" | "captcha" | "errors" | "timeout"> {
+  const t0 = Date.now();
+  await page.waitForLoadState("networkidle", { timeout: 15000 }).catch(() => {});
+  while (Date.now() - t0 < timeoutMs) {
+    const text = await pageText(page).catch(() => "");
+    if (CONFIRMATION_RE.test(text) || /confirm|thank|success/i.test(page.url())) return "confirmed";
+    if (SUBMIT_CODE_TEXT.test(text)) return "code";
+    if (await hasCaptcha(page)) return "captcha";
+    if ((await visibleErrors(page)).length) return "errors";
+    await sleep(1000);
+  }
+  return "timeout";
 }
 
 function stripFrame(f: FrameField & FilledField): FilledField {

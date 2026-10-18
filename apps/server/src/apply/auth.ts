@@ -315,7 +315,7 @@ async function enterCode(page: Page, frame: Frame, code: string, button: RegExp)
   if (!(await clickByText(page, button))) await target.press("Enter");
 }
 
-const SUBMIT_CODE_TEXT = /(verification|security) code (has been |was )?sent|enter the (\d+-character |\d-digit )?(security |verification )?code|code (to|in order to) (submit|complete)|check your (email|inbox) for (a|the) code/i;
+export const SUBMIT_CODE_TEXT = /(verification|security) code (has been |was )?sent|enter the (\d+-character |\d-digit )?(security |verification )?code|code (to|in order to) (submit|complete)|check your (email|inbox) for (a|the) code/i;
 
 /**
  * Some boards (Greenhouse's fraud check) email a security code after Submit and hold the application until it's
