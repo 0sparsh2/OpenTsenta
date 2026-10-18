@@ -17,6 +17,8 @@ export interface AnswerContext {
   coverText: string | null;
   /** Fields from a previous run of this application (user edits from review win). */
   prior: FilledField[];
+  /** The user approved this form: submit the answers they reviewed, not freshly written ones. */
+  keepReviewed?: boolean;
   /** The résumé profile's notes for the agent. */
   notes?: string;
   /** Draft open-ended answers for this job (Settings → autoWriteAnswers). */
@@ -669,7 +671,10 @@ export async function answerFields(c: AnswerContext, fields: FormField[]): Promi
   const toWrite: WriteItem[] = [];
   const autoWrite = c.autoWrite ?? true;
   const library = withDefaults(c.profile.library);
-  const priorByLabel = new Map(c.prior.filter((p) => p.source === "user" && p.value != null).map((p) => [normalizeQuestion(p.label), p]));
+  // Your own answers always carry over. After you approve the form, every answer you saw does (except files, which
+  // are attached fresh), so the submitted form is the one you reviewed.
+  const reviewed = (p: FilledField) => p.value != null && p.value !== "" && p.source !== "unanswered" && p.kind !== "file";
+  const priorByLabel = new Map(c.prior.filter((p) => (p.source === "user" || (c.keepReviewed && reviewed(p))) && p.value != null).map((p) => [normalizeQuestion(p.label), p]));
   const ask = (f: FormField, note = "Needs your input"): FilledField => ({ ...f, value: null, source: "unanswered", confidence: 0, note: f.required ? note : undefined });
 
   const push = result.push.bind(result);
@@ -685,7 +690,7 @@ export async function answerFields(c: AnswerContext, fields: FormField[]): Promi
     }
     const prior = priorByLabel.get(normalizeQuestion(f.label));
     if (prior) {
-      result.push({ ...f, value: prior.value, source: "user", confidence: 1 });
+      result.push({ ...f, value: prior.value, source: prior.source === "user" ? "user" : prior.source, confidence: prior.source === "user" ? 1 : prior.confidence, note: prior.note });
       continue;
     }
     const rule = fromRules(c, f);

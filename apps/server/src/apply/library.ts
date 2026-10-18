@@ -191,6 +191,11 @@ const lowerFirst = (s: string) => (/^[A-Z][a-z]/.test(s) ? s[0].toLowerCase() + 
 const sentence = (s: string) => s.trim().replace(/[.;,\s]+$/, "");
 const listOf = (xs: string[]) => (xs.length <= 1 ? (xs[0] ?? "") : `${xs.slice(0, -1).join(", ")} and ${xs[xs.length - 1]}`);
 
+/** A bullet that starts with something the candidate did: a past-tense verb or a common irregular one. */
+// Not things done to you ("Promoted to…", "Named a Top 100…"): "I promoted" isn't a sentence.
+const ACTION_START =
+  /^(?!(?:Promoted|Awarded|Selected|Named|Recognized|Recognised|Nominated|Invited|Hired|Featured|Ranked|Granted|Accepted|Elected|Admitted|Offered|Funded|Cited)\b)(?:[A-Z][a-z]+ed|Built|Led|Ran|Wrote|Made|Drove|Grew|Cut|Won|Shipped|Took|Set|Taught|Brought|Spun|Rebuilt|Owned|Co-founded|Founded)\b/;
+
 function material(c: WriteContext) {
   const jd = `${c.job.title}\n${c.job.description}`;
   const jdSkills = extractSkills(jd);
@@ -198,9 +203,16 @@ function material(c: WriteContext) {
   const overlap = jdSkills.filter((s) => mine.includes(s.toLowerCase())).slice(0, 3);
   const role = c.doc.experience.find((e) => !e.hidden);
   const keys = jdSkills.map((s) => s.toLowerCase());
+  // Only bullets that read as "I <did>" ("Built…", "Led…"), after dropping a "Label:" lead-in ("Recognition: …"):
+  // the templates put "I" in front of them.
   const bullets = c.doc.experience
     .filter((e) => !e.hidden)
-    .flatMap((e, ri) => e.bullets.map((b) => ({ b: plain(b), company: e.company, score: keys.filter((k) => plain(b).toLowerCase().includes(k)).length * 3 + (/\d/.test(b) ? 2 : 0) - ri })));
+    .flatMap((e, ri) =>
+      e.bullets
+        .map((raw) => plain(raw).replace(/^[A-Z][\w &/-]{2,40}:\s+/, ""))
+        .filter((b) => ACTION_START.test(b))
+        .map((b) => ({ b, company: e.company, score: keys.filter((k) => b.toLowerCase().includes(k)).length * 3 + (/\d/.test(b) ? 2 : 0) - ri })),
+    );
   bullets.sort((a, b) => b.score - a.score);
   const years = c.profile.logistics.yearsOfExperience;
   return { overlap, role, best: bullets[0], second: bullets[1], years };

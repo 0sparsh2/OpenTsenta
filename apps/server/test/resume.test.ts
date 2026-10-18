@@ -405,3 +405,30 @@ test("answer rules: 'in NYC/SF or willing to move there' comes from your relocat
   assert.equal(echoesQuestion("Yes, I can work in person in NYC five days a week.", q.label), false);
   assert.equal(echoesQuestion("I'm based in Seattle and happy to relocate.", q.label), false);
 });
+
+test("approving a form submits the answers you reviewed; the plain template never writes 'I recognition:'", async () => {
+  const { writeAnswers } = await import("../src/apply/library.ts");
+  const profile = (await call("GET", "/profile")).data;
+  const doc = {
+    experience: [{ id: "x1", company: "Boeing", title: "Data Scientist", start: "2024-06", current: true, bullets: ["Recognition: Promoted to full-time after winning the 2024 hackathon", "Built a LangGraph multi-agent Text2SQL platform used across the company"] }],
+    skills: ["Python"],
+    education: [],
+  } as any;
+  const job = { id: "j", company: "Traba", title: "Senior Product Manager", description: "Agents for staffing.", location: "NYC" } as any;
+  const why = { id: "w", label: "Why Traba? (3–5 sentences)", kind: "textarea", required: false } as any;
+
+  // The no-model template: only "I <did>" bullets, after any "Label:" lead-in.
+  const whyEntry = { id: "why", question: "Why do you want to work here?", mode: "write", answer: "", builtin: "why_company" } as any;
+  const [t] = await writeAnswers({ profile, doc, job, notes: "" }, [{ field: why, entry: whyEntry }]);
+  assert.doesNotMatch(t.value, /I recognition|I promoted/i);
+  assert.match(t.value, /At Boeing, I built a LangGraph/);
+
+  // After approval the reviewed answer goes out as is, even though a fresh one would differ.
+  const reviewed = { ...why, value: "Traba's AI operating layer for staffing is the problem I want to work on.", source: "written", confidence: 0.8 };
+  const ctx = { profile, doc, job, resumePdf: null, coverPdf: null, coverText: null, prior: [reviewed], autoWrite: true };
+  const [kept] = await answerFields({ ...ctx, keepReviewed: true } as any, [why]);
+  assert.equal(kept.value, reviewed.value);
+  assert.equal(kept.source, "written", "still shown as Ferry's draft");
+  const [fresh] = await answerFields(ctx as any, [why]);
+  assert.notEqual(fresh.value, reviewed.value, "before approval, drafts are written fresh");
+});

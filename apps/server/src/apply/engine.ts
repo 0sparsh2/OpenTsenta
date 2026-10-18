@@ -356,6 +356,7 @@ async function execute(run: Run, opts: RunOptions) {
       coverPdf,
       coverText: run.app.coverLetter,
       prior: run.app.fields,
+      keepReviewed: Boolean(opts.submit),
       notes: [resume.notes, run.app.tailorInstructions].filter(Boolean).join("\n"),
       autoWrite: user.settings.autoWriteAnswers,
     });
