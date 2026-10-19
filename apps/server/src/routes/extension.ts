@@ -65,6 +65,8 @@ extension.post("/extension/fill", async (c) => {
       coverPdf: null,
       coverText: app.coverLetter,
       prior: app.fields,
+      // Ferry already filled this one for your review (it's being handed to your browser): use those answers.
+      keepReviewed: Boolean(app.handOff) || app.status === "PENDING_SUBMIT_REVIEW",
       notes: profile.notes,
       autoWrite: u.settings.autoWriteAnswers,
     },
@@ -91,11 +93,20 @@ extension.post("/extension/fill", async (c) => {
 
 /** The extension's "I submitted it" button. */
 extension.post("/extension/submitted", async (c) => {
-  const { applicationId } = (await c.req.json().catch(() => ({}))) as { applicationId?: string };
+  const { applicationId, confirmation, url } = (await c.req.json().catch(() => ({}))) as { applicationId?: string; confirmation?: string; url?: string };
   const a = applicationId ? getApplication(applicationId) : undefined;
   if (!a || a.userId !== c.get("user").id) return c.json({ error: "Not found" }, 404);
   const job = getJob(a.jobId);
-  patchApplication(a.id, { status: "COMPLETED", submittedAt: new Date().toISOString(), error: null, confirmation: { text: "Submitted by you in your browser (filled by the Ferry extension)." } });
-  setTrackedStatus(a.id, "APPLIED", "submitted from the extension");
+  // The extension saw the employer's confirmation page ("page"), or you clicked "I submitted it" ("you").
+  const seen = typeof confirmation === "string" && confirmation.trim();
+  patchApplication(a.id, {
+    status: "COMPLETED",
+    submittedAt: new Date().toISOString(),
+    error: null,
+    confirmation: seen
+      ? { text: seen.slice(0, 200), url: typeof url === "string" ? url.slice(0, 500) : undefined, via: "page" }
+      : { text: "Submitted by you in your browser (filled by the Ferry extension).", via: "you" },
+  });
+  setTrackedStatus(a.id, "APPLIED", seen ? "confirmed by the employer's page" : "submitted from the extension");
   return c.json({ ok: true, job: job ? { title: job.title, company: job.company } : null });
 });

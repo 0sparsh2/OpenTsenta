@@ -27,7 +27,7 @@ import type { FilledField, PipelineStatus, TraceStep } from "../types.ts";
 import { answerFields, countryName, memorable, missingRequired, pickOption } from "./answer.ts";
 import { detectAuthState, handleAuth, SUBMIT_CODE_TEXT, submitTimeCode } from "./auth.ts";
 import { extractFields, pageText, type FrameField } from "./extract.ts";
-import { botWall, CONFIRMATION_RE, dismissCookieBanner, findAgreement, fillField, findApplyEntry, findApplyManual, findNext, findSubmit, hasCaptcha, probeComboboxOptions, verifyAndRepair, visibleErrors } from "./fill.ts";
+import { botCheckOn, botWall, CONFIRMATION_RE, dismissCookieBanner, findAgreement, fillField, findApplyEntry, findApplyManual, findNext, findSubmit, hasCaptcha, probeComboboxOptions, verifyAndRepair, visibleErrors } from "./fill.ts";
 import { navigate } from "./navigator.ts";
 
 const MAX_PAGES = 8;
@@ -436,6 +436,13 @@ async function execute(run: Run, opts: RunOptions) {
       return;
     }
 
+    // A real employer whose form checks for bots: Ferry fills it for your review, but the final submit happens in your
+    // own browser (the extension fills the answers you reviewed). An automated browser gets scored as a bot there.
+    if (!isSandbox) {
+      const check = await botCheckOn(page);
+      if (check !== run.app.handOff) run.app = patchApplication(run.app.id, { handOff: check });
+    }
+
     const wantsSubmit = opts.submit || user.settings.autoSubmitApplication;
     if (!wantsSubmit) {
       run.think("Everything is filled in. Paused before the final submit so you can review it.");
@@ -454,6 +461,13 @@ async function execute(run: Run, opts: RunOptions) {
       run.think("Dry run: stopped right before clicking Submit (set ALLOW_REAL_SUBMIT=true to send real applications)", "action");
       const shot = await run.shot(page, stoppedBeforeNext ? "Stopped before the next page (dry run)" : "Ready to submit (dry run)");
       finish(run, { url: page.url(), text: stoppedBeforeNext ? "Dry run, stopped before the next page" : "Dry run, not submitted", screenshot: shot, dryRun: true });
+      return;
+    }
+
+    if (run.app.handOff) {
+      const company = job.company.replace(/\s*\(.*?\)/, "");
+      run.think(`${company}'s form checks for bots (${run.app.handOff}), so the final submit happens in your browser.`, "action");
+      run.status("NEEDS_INPUT", { error: `Submit this one from your browser: ${company}'s form checks for bots (${run.app.handOff}). Open it in Ferry and click "Submit from my browser"; the extension fills the answers you reviewed.` });
       return;
     }
 
@@ -480,7 +494,7 @@ async function execute(run: Run, opts: RunOptions) {
       const confirmed = CONFIRMATION_RE.test(text) || /confirm|thank|success/i.test(page.url());
       if (confirmed) {
         const shot = await run.shot(page, "Confirmation");
-        finish(run, { url: page.url(), text: (text.match(CONFIRMATION_RE)?.[0] ?? "Submitted").slice(0, 200), screenshot: shot, dryRun: false });
+        finish(run, { url: page.url(), text: (text.match(CONFIRMATION_RE)?.[0] ?? "Submitted").slice(0, 200), screenshot: shot, dryRun: false, via: "page" });
         return;
       }
       await run.shot(page, "After submit");
@@ -493,6 +507,7 @@ async function execute(run: Run, opts: RunOptions) {
       // re-applications, and some take a submission without a confirmation page).
       if (!errs.length && outcome === "timeout") {
         run.think("Clicked Submit, but no confirmation page appeared within a minute and the employer flagged nothing.", "error");
+        run.app = patchApplication(run.app.id, { confirmation: { pending: true, clickedAt: clickedAt.toISOString(), url: page.url() } });
         run.status("NEEDS_INPUT", {
           error: `Submitted, but no confirmation appeared. Check your email for a confirmation from ${job.company.replace(/\s*\(.*?\)/, "")} before applying again (they may limit re-applications); if it went through, mark it done.`,
         });

@@ -13,21 +13,21 @@ export function getRenderBrowser() {
 }
 
 export function getApplyBrowser() {
-  applyBrowser ??= chromium.launch({
-    headless: config.headless,
-    args: config.headless ? [] : ["--window-size=1100,900", "--window-position=40,40"],
-  });
+  const opts = { headless: config.headless, args: config.headless ? [] : ["--window-size=1100,900", "--window-position=40,40"] };
+  // An installed Chrome when asked for (falls back to the bundled Chromium if it isn't there).
+  applyBrowser ??= config.applyBrowserChannel
+    ? chromium.launch({ ...opts, channel: config.applyBrowserChannel }).catch((e) => {
+        console.warn(`[browser] ${config.applyBrowserChannel} didn't start (${(e as Error).message.split("\n")[0]}); using the bundled Chromium`);
+        return chromium.launch(opts);
+      })
+    : chromium.launch(opts);
   return applyBrowser;
 }
 
 export async function newApplyContext(): Promise<BrowserContext> {
   const b = await getApplyBrowser();
-  return b.newContext({
-    viewport: { width: 1280, height: 900 },
-    userAgent:
-      "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/138.0.0.0 Safari/537.36",
-    locale: "en-US",
-  });
+  // The browser's own user agent: Ferry doesn't pretend to be something else.
+  return b.newContext({ viewport: { width: 1280, height: 900 }, locale: "en-US" });
 }
 
 export async function closeBrowsers() {

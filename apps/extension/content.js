@@ -194,8 +194,13 @@
       out.innerHTML = `<div class="ok"></div>`;
       const kept = res.kept ? ` ${res.kept} already filled in.` : "";
       const left = res.left.length ? ` Still needs you: ${res.left.slice(0, 4).join("; ")}${res.left.length > 4 ? "…" : ""}.` : "";
-      out.firstChild.textContent = `Filled ${res.filled} of ${res.total} fields with your tailored answers.${kept}${left} Review everything, then continue or submit it yourself.`;
+      out.firstChild.textContent = `Filled ${res.filled} of ${res.total} fields with your tailored answers.${kept}${left} Review everything, then submit it yourself; Ferry marks it applied when the employer confirms.`;
       $(".done").hidden = false;
+      watchForConfirmation(appId, (text) => {
+        out.innerHTML = `<div class="ok"></div>`;
+        out.firstChild.textContent = `The employer confirmed it ("${text}"). Marked as applied in Ferry.`;
+        $(".done").hidden = true;
+      });
     };
     $(".submitted").onclick = async () => {
       if (!appId) return;
@@ -206,6 +211,29 @@
     };
     document.documentElement.appendChild(host);
   }
+
+  // After a fill: the employer's own confirmation ("Thank you for applying") is what marks it applied in Ferry. It
+  // counts only once it appears (text already on the page at fill time, like a posting's intro, doesn't), and it's
+  // remembered across a page change in this tab (some forms load a separate thank-you page).
+  const CONFIRM_RE = /thank(s| you) for (applying|your application|submitting)|application (has been |was )?(submitted|received)|we('ve| have) received your application|successfully (submitted|applied)/i;
+  function watchForConfirmation(applicationId, onConfirmed, carried) {
+    // On the form page: is such text already there? On a page loaded after it: what the form page said.
+    const baseline = carried ? carried.baseline : CONFIRM_RE.test(document.body.innerText || "");
+    if (!carried) sessionStorage.setItem("ferry:filledApp", JSON.stringify({ applicationId, at: Date.now(), baseline }));
+    const started = Date.now();
+    const timer = setInterval(async () => {
+      if (Date.now() - started > 30 * 60_000) return clearInterval(timer);
+      const m = (document.body.innerText || "").match(CONFIRM_RE);
+      if (!m || baseline) return;
+      clearInterval(timer);
+      sessionStorage.removeItem("ferry:filledApp");
+      const r = await send("ferry:submitted", { applicationId, confirmation: m[0], url: location.href });
+      if (!r.error) onConfirmed?.(m[0]);
+    }, 2000);
+  }
+  // A thank-you page that loaded after the form, in the same tab.
+  const pending = JSON.parse(sessionStorage.getItem("ferry:filledApp") || "null");
+  if (pending && Date.now() - pending.at < 30 * 60_000) watchForConfirmation(pending.applicationId, null, pending);
 
   let mountedFor = null;
   const run = () => {

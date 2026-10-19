@@ -259,6 +259,44 @@ test("an emailed code nobody's inbox has: asked for in pending_questions, answer
   assert.equal((await rest("POST", `/applications/${app.id}/answer`, { answers: [{ field_id: "verification_code", value: "123456" }] })).status, 409, "no longer waiting");
 });
 
+test("a form that checks for bots is submitted from your browser; only the employer's confirmation counts", async () => {
+  const { createApplication, getUserByEmail, patchApplication, getApplication } = await import("../src/store.ts");
+  const { config } = await import("../src/config.ts");
+  const { all } = await import("../src/db.ts");
+  const u = getUserByEmail("mcp@ferry.local")!;
+  const jobs = all<{ id: string; company: string; title: string }>("SELECT id, company, title FROM jobs WHERE url LIKE '%/mock-ats/%' ORDER BY id LIMIT 3");
+  const { app } = createApplication(u.id, jobs[2].id, "mcp", null);
+  patchApplication(app.id, { status: "PENDING_SUBMIT_REVIEW", handOff: "reCAPTCHA" });
+
+  // Ferry (or an agent) can't submit it: approving explains where it happens instead.
+  const real = config.allowRealSubmit;
+  config.allowRealSubmit = true;
+  try {
+    const r = await rest("POST", `/applications/${app.id}/approve`, {});
+    assert.equal(r.status, 409);
+    assert.match(r.data.error, /from your own browser/);
+    assert.equal(getApplication(app.id)!.status, "PENDING_SUBMIT_REVIEW", "nothing queued");
+    assert.equal((await rest("GET", `/applications/${app.id}`)).data.handOff, "reCAPTCHA", "the dashboard shows the hand-off");
+  } finally {
+    config.allowRealSubmit = real;
+  }
+
+  // The extension saw the employer's confirmation page.
+  await rest("POST", "/extension/submitted", { applicationId: app.id, confirmation: "Thank you for applying", url: "https://jobs.example/thanks" });
+  const done = getApplication(app.id)!;
+  assert.equal(done.status, "COMPLETED");
+  assert.deepEqual([done.confirmation?.via, done.confirmation?.text], ["page", "Thank you for applying"]);
+
+  // A submit Ferry couldn't confirm on the page stays pending until the employer's email confirms it.
+  const { app: other } = createApplication(u.id, jobs[1].id, "mcp", null);
+  patchApplication(other.id, { status: "NEEDS_INPUT", error: "Submitted, but no confirmation appeared.", confirmation: { pending: true, clickedAt: new Date().toISOString() } });
+  const company = jobs[1].company.replace(/\s*\(.*?\)/, "");
+  await rest("POST", "/inbox/ingest", { from: "no-reply@ashbyhq.com", fromName: company, subject: `Thank you for applying to ${company}`, body: `We received your application for ${jobs[1].title} at ${company}. Our team will review it.` });
+  const confirmed = getApplication(other.id)!;
+  assert.equal(confirmed.status, "COMPLETED", JSON.stringify(confirmed.confirmation));
+  assert.equal(confirmed.confirmation?.via, "email");
+});
+
 test("ferry mcp: the stdio bridge speaks JSON-RPC lines to Ferry", async () => {
   const cli = fileURLToPath(new URL("../../cli/bin/ferry.mjs", import.meta.url));
   const child = spawn(process.execPath, [cli, "mcp"], { env: { ...process.env, FERRY_URL: BASE, FERRY_TOKEN: token }, stdio: ["pipe", "pipe", "pipe"] });

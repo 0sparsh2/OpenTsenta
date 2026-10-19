@@ -150,6 +150,12 @@ fly deploy
 Then in claude.ai, go to Settings → Connectors → Add custom connector and enter `https://<app>.fly.dev/api/v1/mcp`.
 Claude registers itself, you sign in to Ferry and approve, and the tools appear.
 
+**Bot checks:** when a real employer's form uses reCAPTCHA, hCaptcha or Turnstile (Ashby, Greenhouse and Lever
+often do, invisibly), Ferry fills it for your review and hands the final submit to your own browser: "Submit from my
+browser" opens the posting, the extension fills the answers you reviewed, you click Submit, and Ferry marks it
+applied when the employer's confirmation page (or email) shows up. Ferry doesn't disguise its browser or solve
+captchas. On your Mac, `HEADLESS=false` and `APPLY_BROWSER_CHANNEL=chrome` run applications in your installed Chrome.
+
 **Free, from your Mac, at a permanent address (Tailscale Funnel, recommended):** set a password in Settings → Security,
 install Tailscale and log in (`brew install --cask tailscale-app`), then:
 

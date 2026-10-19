@@ -529,7 +529,9 @@ function appView(a: Application, withDetail = false) {
     reviewResume: a.reviewResume,
     trackedStatus: a.trackedStatus,
     source: a.source,
-    job: job ? { id: job.id, title: job.title, company: job.company, location: job.location, ats: job.ats, atsName: atsName(job.ats), url: job.url } : null,
+    job: job ? { id: job.id, title: job.title, company: job.company, location: job.location, ats: job.ats, atsName: atsName(job.ats), url: job.url, applyUrl: job.applyUrl } : null,
+    /** The form checks for bots: the final submit happens in your browser (see "Submit from my browser"). */
+    handOff: a.handOff,
     atsScore: a.atsScore,
     changesCount: a.changes.length,
     hasCoverLetter: Boolean(a.coverLetter),
@@ -638,6 +640,12 @@ api.post("/applications/:id/approve", async (c) => {
       const edit = body.fields!.find((e) => e.id === f.id);
       return edit ? { ...f, value: edit.value, source: "user" as const, confidence: 1, note: undefined } : f;
     });
+  }
+  // The employer's form checks for bots: the final submit happens in your browser, not Ferry's.
+  if (a.handOff && config.allowRealSubmit && !["PENDING_RESUME_REVIEW", "PENDING_CL_REVIEW"].includes(a.status)) {
+    patchApplication(a.id, patch);
+    const company = getJob(a.jobId)?.company.replace(/\s*\(.*?\)/, "") ?? "The employer";
+    return bad(c, `${company}'s form checks for bots (${a.handOff}), so this one is submitted from your own browser: open it in Ferry and click "Submit from my browser" (the Ferry extension fills the reviewed answers).`, 409);
   }
   patchApplication(a.id, { ...patch, error: null });
   if (a.status === "PENDING_RESUME_REVIEW" || a.status === "PENDING_CL_REVIEW") {

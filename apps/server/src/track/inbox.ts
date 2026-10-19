@@ -2,7 +2,7 @@ import { z } from "zod";
 import { publish } from "../bus.ts";
 import { all, one, run, uid } from "../db.ts";
 import { structured, text, withFallback } from "../llm.ts";
-import { getApplication, getJob, getUser, setTrackedStatus, toApplication } from "../store.ts";
+import { getApplication, getJob, getUser, patchApplication, setTrackedStatus, toApplication } from "../store.ts";
 import type { TrackedStatus } from "../types.ts";
 import { truncate } from "../util/text.ts";
 
@@ -87,7 +87,7 @@ async function classify(e: IncomingEmail) {
 
 /** Find the application an email belongs to: company name/domain match among submitted apps. */
 export function routeToApplication(userId: string, company: string, e: IncomingEmail): string | null {
-  const apps = all("SELECT a.*, j.company AS company FROM applications a JOIN jobs j ON j.id = a.job_id WHERE a.user_id = ? AND a.status = 'COMPLETED' ORDER BY a.submitted_at DESC", userId) as (Record<string, unknown> & { company: string })[];
+  const apps = all("SELECT a.*, j.company AS company FROM applications a JOIN jobs j ON j.id = a.job_id WHERE a.user_id = ? AND (a.status = 'COMPLETED' OR json_extract(a.confirmation, '$.pending') = 1) ORDER BY a.submitted_at DESC", userId) as (Record<string, unknown> & { company: string })[];
   const hay = `${company} ${e.fromAddr} ${e.fromName ?? ""} ${e.subject} ${e.body.slice(0, 2000)}`.toLowerCase();
   const norm = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, "");
   const flat = norm(hay);
@@ -130,6 +130,14 @@ export async function ingestEmail(userId: string, e: IncomingEmail) {
     c.company || null,
     appId,
   );
+  // The employer's confirmation email: proof the submission landed (it settles one Ferry couldn't confirm on the page).
+  if (appId && c.category === "confirmation") {
+    const app = getApplication(appId);
+    if (app?.confirmation?.pending && app.status !== "COMPLETED") {
+      patchApplication(appId, { status: "COMPLETED", submittedAt: app.confirmation.clickedAt ?? new Date().toISOString(), error: null, confirmation: { ...app.confirmation, pending: false, via: "email", email: e.subject } });
+      setTrackedStatus(appId, "APPLIED", `confirmed by email: ${e.subject}`);
+    } else if (app?.status === "COMPLETED" && app.confirmation && !app.confirmation.email) patchApplication(appId, { confirmation: { ...app.confirmation, email: e.subject } });
+  }
   const next = STATUS_FOR[c.category];
   if (appId && next) {
     const app = getApplication(appId);

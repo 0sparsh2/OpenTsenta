@@ -248,6 +248,23 @@ export async function botWall(page: Page): Promise<string | null> {
   if (/access denied/.test(title) && /reference #/.test(text)) return "Akamai";
   return null;
 }
+/**
+ * Does the form check for bots at all (reCAPTCHA, hCaptcha, Turnstile; visible or invisible)? On a real employer
+ * that means the final submit belongs in the person's own browser: an automated one gets scored as a bot.
+ */
+export async function botCheckOn(page: Page): Promise<string | null> {
+  for (const f of page.frames()) {
+    const u = f.url();
+    if (/recaptcha/i.test(u)) return "reCAPTCHA";
+    if (/hcaptcha/i.test(u)) return "hCaptcha";
+    if (/turnstile|challenges\.cloudflare/i.test(u)) return "Cloudflare Turnstile";
+  }
+  const scripted = await page
+    .evaluate(() => [...document.scripts].map((s) => s.src).find((s) => /recaptcha|hcaptcha|turnstile/i.test(s)) ?? "")
+    .catch(() => "");
+  return scripted ? (/hcaptcha/i.test(scripted) ? "hCaptcha" : /turnstile/i.test(scripted) ? "Cloudflare Turnstile" : "reCAPTCHA") : null;
+}
+
 export async function hasCaptcha(page: Page): Promise<boolean> {
   for (const f of page.frames()) {
     if (CAPTCHA_RE.test(f.url()) && !/size=invisible/.test(f.url())) {

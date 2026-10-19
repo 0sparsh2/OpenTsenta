@@ -454,7 +454,11 @@ export interface Application {
   lastThought: string | null;
   currentPage: number | null;
   totalPages: number | null;
-  confirmation: { url?: string; text?: string; screenshot?: string; dryRun?: boolean } | null;
+  /**
+   * How the submission was confirmed: via "page" (the employer's confirmation page), "email" (their confirmation email),
+   * or "you" (you said so). pending: Ferry clicked Submit but nothing confirmed it yet.
+   */
+  confirmation: { url?: string; text?: string; screenshot?: string; dryRun?: boolean; via?: "page" | "email" | "you"; pending?: boolean; clickedAt?: string; email?: string } | null;
   error: string | null;
   attempts: number;
   submittedAt: string | null;
@@ -462,6 +466,8 @@ export interface Application {
   statusHistory: { status: string; at: string; note?: string }[];
   /** The employer account (vault host) this application signed in or signed up with. */
   accountHost: string | null;
+  /** The employer's form checks for bots ("reCAPTCHA"…): the final submit happens in your own browser. */
+  handOff: string | null;
   /** Pause to preview the tailored résumé before applying (null = follow Settings). */
   reviewResume: boolean | null;
   /** Résumé redos used ("Redo with instructions"). */
@@ -497,6 +503,7 @@ export const toApplication = (r: Record<string, unknown>): Application => ({
   trackedStatus: (r.tracked_status as TrackedStatus) ?? null,
   statusHistory: parse(r.status_history, []),
   accountHost: (r.account_host as string) ?? null,
+  handOff: (r.hand_off as string) ?? null,
   reviewResume: r.review_resume == null ? null : Boolean(r.review_resume),
   redos: Number(r.redos ?? 0),
   tailorInstructions: (r.tailor_instructions as string) ?? null,
@@ -549,6 +556,7 @@ const COLS: Record<string, string> = {
   statusHistory: "status_history",
   redos: "redos",
   accountHost: "account_host",
+  handOff: "hand_off",
   reviewResume: "review_resume",
   tailorInstructions: "tailor_instructions",
 };

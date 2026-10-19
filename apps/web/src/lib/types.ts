@@ -229,7 +229,9 @@ export interface ApplicationRow {
   profile: { id: string; name: string } | null;
   trackedStatus: TrackedStatus | null;
   source: string;
-  job: { id: string; title: string; company: string; location: string; ats: string; atsName: string; url: string; description?: string } | null;
+  job: { id: string; title: string; company: string; location: string; ats: string; atsName: string; url: string; applyUrl?: string; description?: string } | null;
+  /** The employer's form checks for bots ("reCAPTCHA"…): the final submit happens in your browser. */
+  handOff?: string | null;
   atsScore: AtsScore | null;
   changesCount: number;
   hasCoverLetter: boolean;
@@ -237,7 +239,7 @@ export interface ApplicationRow {
   currentPage: number | null;
   totalPages: number | null;
   error: string | null;
-  confirmation: { url?: string; text?: string; screenshot?: string; dryRun?: boolean } | null;
+  confirmation: { url?: string; text?: string; screenshot?: string; dryRun?: boolean; via?: "page" | "email" | "you"; pending?: boolean; email?: string } | null;
   submittedAt: string | null;
   createdAt: string;
   updatedAt: string;

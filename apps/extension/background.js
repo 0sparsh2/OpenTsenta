@@ -52,7 +52,7 @@ chrome.runtime.onMessage.addListener((msg, sender, reply) => {
       case "ferry:fill":
         return await api("POST", "/extension/fill", msg.body);
       case "ferry:submitted":
-        return await api("POST", "/extension/submitted", { applicationId: msg.applicationId });
+        return await api("POST", "/extension/submitted", { applicationId: msg.applicationId, confirmation: msg.confirmation, url: msg.url });
       case "ferry:file": {
         // The tailored résumé, fetched with the token here so the page never sees it.
         const { apiUrl, token } = await settings();

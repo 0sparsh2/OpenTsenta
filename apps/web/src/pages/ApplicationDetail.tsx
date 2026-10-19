@@ -183,6 +183,35 @@ function TracePanel({ trace }: { trace: TraceStep[] }) {
   );
 }
 
+/**
+ * The employer's form checks for bots, so the last step happens in your own browser: open the posting there, let the
+ * Ferry extension fill the answers you reviewed, and submit. Ferry marks it applied when the employer confirms.
+ */
+function HandOff({ app }: { app: App }) {
+  if (!app.handOff || !["PENDING_SUBMIT_REVIEW", "NEEDS_INPUT"].includes(app.status) || !app.job) return null;
+  const company = app.job.company.replace(/\s*\(.*?\)/, "");
+  return (
+    <div className="mt-3 rounded-lg bg-signal-soft px-3 py-2.5 text-[13px] text-ink">
+      <p className="flex items-start gap-2 font-medium">
+        <MousePointerClick className="mt-0.5 h-4 w-4 shrink-0 text-signal" />
+        Submit this one from your browser
+      </p>
+      <p className="mt-1 pl-6 text-muted">
+        {company}'s form checks for bots ({app.handOff}), which an automated browser fails. Open it in your own Chrome: the Ferry
+        extension fills the answers you reviewed and attaches your résumé. Click Submit there; Ferry marks it applied when {company}{" "}
+        confirms.
+      </p>
+      <div className="mt-2 pl-6">
+        <a href={app.job.applyUrl ?? app.job.url} target="_blank" rel="noreferrer">
+          <Button variant="signal" icon={<ExternalLink className="h-4 w-4" />}>
+            Submit from my browser
+          </Button>
+        </a>
+      </div>
+    </div>
+  );
+}
+
 /** An emailed code Ferry is waiting on, with the employer's page held open: type it here (or let Claude or muse). */
 function CodePrompt({ app }: { app: App }) {
   const [value, setValue] = useState("");
@@ -311,7 +340,7 @@ export default function ApplicationDetail() {
               Retry
             </Button>
           )}
-          {["PENDING_RESUME_REVIEW", "PENDING_CL_REVIEW", "PENDING_SUBMIT_REVIEW", "NEEDS_INPUT"].includes(app.status) && (
+          {["PENDING_RESUME_REVIEW", "PENDING_CL_REVIEW", "PENDING_SUBMIT_REVIEW", "NEEDS_INPUT"].includes(app.status) && !(app.handOff && ["PENDING_SUBMIT_REVIEW", "NEEDS_INPUT"].includes(app.status) && missing.length === 0) && (
             <Button variant="signal" loading={approving} disabled={app.status === "NEEDS_INPUT" && missing.length > 0} onClick={doApprove} icon={<Send className="h-4 w-4" />}>
               {approveLabel}
             </Button>
@@ -329,6 +358,7 @@ export default function ApplicationDetail() {
           </p>
         )}
         <CodePrompt app={app} />
+        <HandOff app={app} />
         {app.status === "NEEDS_INPUT" && (
           <div className="mt-3 flex items-start gap-2 rounded-lg bg-signal-soft px-3 py-2.5 text-[13px] text-ink">
             <CircleAlert className="mt-0.5 h-4 w-4 shrink-0 text-signal" />
@@ -357,7 +387,15 @@ export default function ApplicationDetail() {
           <div className="mt-3 flex items-start gap-2 rounded-lg bg-kelp-soft px-3 py-2.5 text-[13px]">
             <Check className="mt-0.5 h-4 w-4 shrink-0 text-kelp" />
             <p>
-              {app.confirmation.dryRun ? "Dry run complete: the form was filled and stopped before Submit." : `Submitted ${timeAgo(app.submittedAt)}. ${app.confirmation.text ?? ""}`}
+              {app.confirmation.dryRun
+                ? "Dry run complete: the form was filled and stopped before Submit."
+                : `Submitted ${timeAgo(app.submittedAt)}. ${app.confirmation.text ?? ""} ${
+                    app.confirmation.via === "page" || app.confirmation.via === "email"
+                      ? `Confirmed by the employer's ${app.confirmation.via === "page" ? "confirmation page" : `email ("${app.confirmation.email}")`}.`
+                      : app.confirmation.via === "you"
+                        ? "Marked by you; no employer confirmation seen yet."
+                        : ""
+                  }`}
             </p>
           </div>
         )}

@@ -60,6 +60,8 @@ export const config = {
   // Apply worker
   applyConcurrency: num("APPLY_CONCURRENCY", 2),
   headless: bool("HEADLESS", true),
+  /** Run applications in an installed browser ("chrome", "msedge") instead of Playwright's bundled Chromium. */
+  applyBrowserChannel: env("APPLY_BROWSER_CHANNEL", ""),
   // Hard safety switch: when false the agent fills forms and stops before the final submit, always.
   allowRealSubmit: bool("ALLOW_REAL_SUBMIT", false),
   pageTimeoutMs: num("PAGE_TIMEOUT_MS", 45000),

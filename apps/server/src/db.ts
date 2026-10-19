@@ -249,6 +249,7 @@ addColumn("applications", "redos", "INTEGER NOT NULL DEFAULT 0");
 addColumn("applications", "tailor_instructions", "TEXT");
 addColumn("applications", "resume_docx", "TEXT");
 addColumn("applications", "account_host", "TEXT");
+addColumn("applications", "hand_off", "TEXT");
 addColumn("applications", "review_resume", "INTEGER");
 addColumn("ats_accounts", "password_kind", "TEXT NOT NULL DEFAULT 'generated'");
 // Per-board polling schedule: big paged boards less often, failing boards back off.
