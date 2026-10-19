@@ -188,7 +188,7 @@ async function openForm(run: Run, page: BrowserPage, target: string): Promise<{ 
   // Job-search boxes, filters and job-alert sign-ups sit on many career pages; they aren't the application.
   const NOT_APPLICATION = /search|keyword|sort by|category|radius|distance|(job )?alert|how often|filter|results page|location\b.*\(all\)|^(all|any) keywords|subscribe|newsletter/i;
   const applicationFields = (f: FrameField[]) => f.filter((x) => !NOT_APPLICATION.test(x.label) && !(x.options ?? []).slice(0, 2).some((o) => /^\(all\)$/i.test(o)));
-  const usable = (f: FrameField[]) => applicationFields(f).filter((x) => x.kind !== "checkbox").length >= 2;
+  const usable = (f: FrameField[]) => looksLikeApplicationForm(applicationFields(f));
 
   if (job.ats === "linkedin") {
     const easy = /\[LinkedIn Easy Apply\]/.test(job.description);
@@ -315,7 +315,7 @@ async function openForm(run: Run, page: BrowserPage, target: string): Promise<{ 
       return {
         blocked: `${atsName(job.ats)} put a bot check (${wall}) in front of this form, and Ferry doesn't get around those. Your tailored résumé and answers are ready: open the posting and apply, or fill it from your own browser with the Ferry extension.`,
       };
-    return { blocked: "Couldn't find the application form on the page" };
+    return { blocked: "Couldn't find the application form on the page (the posting may have closed)" };
   }
   return { fields: applicationFields(fields) };
 }
@@ -533,6 +533,15 @@ async function execute(run: Run, opts: RunOptions) {
   } finally {
     await ctx.close().catch(() => {});
   }
+}
+
+/**
+ * An application form asks who you are (email, name, phone, or a résumé). A closed posting that redirects to the
+ * job list has fields too (Department, Location filters) and must not be "filled".
+ */
+export function looksLikeApplicationForm(fields: { label: string; kind: string }[]): boolean {
+  const real = fields.filter((x) => x.kind !== "checkbox");
+  return real.length >= 2 && real.some((x) => ["email", "tel", "file"].includes(x.kind) || /e-?mail|first name|last name|full name|^name\b|legal name|phone|r[ée]sum[ée]|\bcv\b/i.test(x.label));
 }
 
 /** After Submit: wait (up to a minute) for a confirmation, a code prompt, a visible captcha, or field errors. */

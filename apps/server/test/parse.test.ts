@@ -136,3 +136,11 @@ test("job pages: a posting reads like one; a plain web page doesn't", async () =
 Qualifications: 5+ years of experience with Python and SQL. Full-time, hybrid in Austin. Benefits: health, 401k, equity. Apply below. `.repeat(2);
   assert.equal(looksLikePosting(jd), true);
 });
+
+test("a closed posting's job list isn't an application form; a real form asks who you are", async () => {
+  const { looksLikeApplicationForm } = await import("../src/apply/engine.ts");
+  const filters = ["Department", "Employment", "Location", "Location Type"].map((label) => ({ label, kind: "select" }));
+  assert.equal(looksLikeApplicationForm(filters), false, "Traba's job list after the posting closed");
+  assert.equal(looksLikeApplicationForm([{ label: "Name", kind: "text" }, { label: "Email", kind: "email" }]), true);
+  assert.equal(looksLikeApplicationForm([{ label: "Resume", kind: "file" }, { label: "LinkedIn Profile", kind: "text" }]), true);
+});
